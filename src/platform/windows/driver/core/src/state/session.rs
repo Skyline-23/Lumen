@@ -1,7 +1,7 @@
 use crate::{
-    CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED, PENDING_READ_DEPTH,
-    STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
-    STATE_SWAPCHAIN_ASSIGNED,
+    CoreRequest, CoreState, CoreTransition, Status, ADAPTER_INITIALIZED, MONITOR_FLAG_MASK,
+    PENDING_READ_DEPTH, STATE_ENCODER_ACTIVE, STATE_KEYFRAME_PENDING, STATE_MONITOR_ACTIVE,
+    STATE_MONITOR_ORPHANED, STATE_SWAPCHAIN_ASSIGNED,
 };
 
 use super::finish;
@@ -41,15 +41,22 @@ pub(super) fn create_monitor(
     request: CoreRequest,
     monitor_id: u64,
     packed_geometry: u64,
-    refresh_millihertz: u64,
+    packed_refresh_and_flags: u64,
 ) -> CoreTransition {
     let width = packed_geometry >> 32;
     let height = packed_geometry & u64::from(u32::MAX);
+    let refresh_millihertz = packed_refresh_and_flags & u64::from(u32::MAX);
+    let monitor_flags = packed_refresh_and_flags >> 32;
     let status = if state.adapter_flags & ADAPTER_INITIALIZED == 0 {
         Status::NotReady
     } else if state.flags & STATE_MONITOR_ACTIVE != 0 {
         Status::Busy
-    } else if monitor_id == 0 || width == 0 || height == 0 || refresh_millihertz == 0 {
+    } else if monitor_id == 0
+        || width == 0
+        || height == 0
+        || refresh_millihertz == 0
+        || monitor_flags & !u64::from(MONITOR_FLAG_MASK) != 0
+    {
         Status::InvalidArgument
     } else {
         state.monitor_id = monitor_id;

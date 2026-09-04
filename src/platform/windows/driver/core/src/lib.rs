@@ -39,18 +39,16 @@ pub unsafe extern "C" fn lumen_driver_core_build_monitor_edid(
     width: u32,
     height: u32,
     refresh_millihertz: u32,
+    hdr_capable: u32,
     output: *mut u8,
     output_len: u32,
 ) -> u32 {
     if output.is_null() || output_len < MONITOR_EDID_BYTES as u32 {
         return EDID_STATUS_BUFFER_TOO_SMALL;
     }
-    let edid = match build_monitor_edid(width, height, refresh_millihertz) {
+    let edid = match build_monitor_edid(width, height, refresh_millihertz, hdr_capable != 0) {
         Ok(edid) => edid,
         Err(MonitorEdidBuildError::InvalidMode) => return EDID_STATUS_INVALID,
-        Err(MonitorEdidBuildError::Unrepresentable) => {
-            return EDID_STATUS_UNREPRESENTABLE;
-        }
     };
     unsafe {
         core::ptr::copy_nonoverlapping(edid.as_ptr(), output, MONITOR_EDID_BYTES);

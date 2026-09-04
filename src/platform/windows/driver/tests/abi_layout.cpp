@@ -11,7 +11,7 @@ static_assert(offsetof(LumenDriverCoreResponse, generation) == 24);
 static_assert(offsetof(LumenDriverVideoSignalMode, width) == 8);
 static_assert(offsetof(LumenDriverVideoSignalMode, scan_line_ordering) == 40);
 static_assert(sizeof(LumenDriverVideoSignalMode) == 48);
-static_assert(sizeof(LumenDriverMonitorEdidMode) == 12);
+static_assert(sizeof(LumenDriverMonitorEdidMode) == 16);
 static_assert(offsetof(LumenDriverCoreState, pending_frame_reads) == 24);
 static_assert(offsetof(LumenDriverCoreState, pending_event_reads) == 56);
 static_assert(LUMEN_IOCTL_QUERY_CAPABILITIES == 0x00226400u);

@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 pub const ABI_MAGIC: u32 = 0x4C55_4D4E;
 pub const ABI_MAJOR: u16 = 1;
-pub const ABI_MINOR: u16 = 4;
+pub const ABI_MINOR: u16 = 6;
 pub const ABI_HEADER_SIZE: u32 = 16;
 pub const ABI_REQUEST_SIZE: u32 = 80;
 pub const ABI_RESPONSE_SIZE: u32 = 48;
@@ -34,6 +34,9 @@ pub const STATE_ENCODER_ACTIVE: u32 = 1 << 1;
 pub const STATE_KEYFRAME_PENDING: u32 = 1 << 2;
 pub const STATE_MONITOR_ORPHANED: u32 = 1 << 3;
 pub const STATE_SWAPCHAIN_ASSIGNED: u32 = 1 << 4;
+
+pub const MONITOR_FLAG_HDR_CAPABLE: u32 = 1 << 0;
+pub const MONITOR_FLAG_MASK: u32 = MONITOR_FLAG_HDR_CAPABLE;
 
 pub const EVENT_ADAPTER_REMOVED: u64 = 1;
 pub const EVENT_SWAPCHAIN_LOST: u64 = 2;

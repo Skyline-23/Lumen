@@ -352,6 +352,7 @@ NTSTATUS LumenInitializeAdapter(WDFDEVICE device, LumenDeviceContext *context) {
   IDDCX_ADAPTER_CAPS caps {};
   caps.Size = sizeof(caps);
   caps.MaxMonitorsSupported = 1;
+  caps.Flags = IDDCX_ADAPTER_FLAGS_CAN_PROCESS_FP16;
   caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);
   caps.EndPointDiagnostics.GammaSupport =
     IDDCX_FEATURE_IMPLEMENTATION_NONE;
@@ -440,15 +441,17 @@ NTSTATUS LumenCreateMonitor(
   const uint32_t width = static_cast<uint32_t>(request.arguments[1] >> 32u);
   const uint32_t height = static_cast<uint32_t>(request.arguments[1]);
   const uint32_t refresh_millihertz = static_cast<uint32_t>(request.arguments[2]);
+  const uint32_t monitor_flags = static_cast<uint32_t>(request.arguments[2] >> 32u);
+  const bool hdr_capable = (monitor_flags & LUMEN_MONITOR_FLAG_HDR_CAPABLE) != 0;
   const uint32_t edid_status = lumen_driver_core_build_monitor_edid(
     width,
     height,
     refresh_millihertz,
+    hdr_capable ? 1u : 0u,
     context->monitor_edid,
     LUMEN_MONITOR_EDID_BYTES
   );
-  if (edid_status != LUMEN_EDID_STATUS_OK &&
-      edid_status != LUMEN_EDID_STATUS_UNREPRESENTABLE) {
+  if (edid_status != LUMEN_EDID_STATUS_OK) {
     return STATUS_INVALID_PARAMETER;
   }
   IDDCX_MONITOR_INFO monitor_info {};
@@ -460,15 +463,8 @@ NTSTATUS LumenCreateMonitor(
   monitor_info.ConnectorIndex = 0;
   monitor_info.MonitorDescription.Size = sizeof(monitor_info.MonitorDescription);
   monitor_info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
-  if (edid_status == LUMEN_EDID_STATUS_OK) {
-    monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
-    monitor_info.MonitorDescription.pData = context->monitor_edid;
-  } else {
-    // IDDCX_MONITOR_DESCRIPTION explicitly permits no monitor description.
-    // The default-description callback below supplies the negotiated Rust mode.
-    monitor_info.MonitorDescription.DataSize = 0;
-    monitor_info.MonitorDescription.pData = nullptr;
-  }
+  monitor_info.MonitorDescription.DataSize = LUMEN_MONITOR_EDID_BYTES;
+  monitor_info.MonitorDescription.pData = context->monitor_edid;
   monitor_info.MonitorContainerId = unpack_monitor_container_id(
     request.arguments[3],
     request.arguments[4]
@@ -489,6 +485,7 @@ NTSTATUS LumenCreateMonitor(
   monitor_context->width = width;
   monitor_context->height = height;
   monitor_context->refresh_millihertz = refresh_millihertz;
+  monitor_context->hdr_capable = hdr_capable;
   IDARG_OUT_MONITORARRIVAL arrival {};
   status = IddCxMonitorArrival(output.MonitorObject, &arrival);
   if (!NT_SUCCESS(status)) {

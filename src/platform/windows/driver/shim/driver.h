@@ -54,6 +54,7 @@ struct LumenMonitorContext {
   uint32_t width;
   uint32_t height;
   uint32_t refresh_millihertz;
+  bool hdr_capable;
 };
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(LumenMonitorContext, LumenGetMonitorContext);

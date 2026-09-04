@@ -1,7 +1,7 @@
 use lumen_windows_driver_core::{
     lumen_driver_core_dispatch, lumen_driver_core_initial_state, CoreRequest, Operation, Status,
-    ADAPTER_DEVICE_D3D11, FRAME_RECORD_BYTES, MAX_EVENT_BYTES, PENDING_READ_DEPTH,
-    STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
+    ADAPTER_DEVICE_D3D11, FRAME_RECORD_BYTES, MAX_EVENT_BYTES, MONITOR_FLAG_HDR_CAPABLE,
+    PENDING_READ_DEPTH, STATE_MONITOR_ACTIVE, STATE_MONITOR_ORPHANED,
 };
 
 const OWNER: u64 = 0xA11C_E001;
@@ -74,6 +74,36 @@ fn rejects_second_owner_without_disturbing_first_owner() {
     // Then: the second owner is busy and the first owner remains authoritative.
     assert_eq!(transition.response.status, Status::Busy.raw());
     assert_eq!(transition.state.owner_id, OWNER);
+}
+
+#[test]
+fn create_monitor_accepts_hdr_and_rejects_unknown_monitor_flags() {
+    // Given: an initialized owner and a valid native display mode.
+    let (state, generation) = claim();
+    let mut hdr = CoreRequest::new(Operation::CreateMonitor, OWNER, generation);
+    hdr.arguments = [
+        7,
+        (2420 << 32) | 1668,
+        120_000 | (u64::from(MONITOR_FLAG_HDR_CAPABLE) << 32),
+        0,
+        0,
+    ];
+
+    // When: the known HDR flag and then an unknown high-bit flag cross the fixed request ABI.
+    let accepted = lumen_driver_core_dispatch(state, hdr);
+    let (fresh, fresh_generation) = claim();
+    let mut unknown = CoreRequest::new(Operation::CreateMonitor, OWNER, fresh_generation);
+    unknown.arguments = [7, (2420 << 32) | 1668, 120_000 | (2 << 32), 0, 0];
+    let rejected = lumen_driver_core_dispatch(fresh, unknown);
+
+    // Then: HDR is admitted without widening the request and unknown semantics fail closed.
+    assert_eq!(accepted.response.status, Status::Ok.raw());
+    assert_eq!(
+        accepted.state.flags & STATE_MONITOR_ACTIVE,
+        STATE_MONITOR_ACTIVE
+    );
+    assert_eq!(rejected.response.status, Status::InvalidArgument.raw());
+    assert_eq!(rejected.state.flags & STATE_MONITOR_ACTIVE, 0);
 }
 
 #[test]
