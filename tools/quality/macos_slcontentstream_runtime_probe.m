@@ -201,6 +201,7 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
 @property(nonatomic) uint64_t encodedBytes;
 @property(nonatomic) uint64_t bootstrapAcknowledgementCount;
 @property(nonatomic) uint64_t bootstrapAcknowledgementFailureCount;
+@property(nonatomic) uint64_t captureFailureCount;
 @property(nonatomic) uint64_t lastSourceSequence;
 @property(nonatomic) BOOL hasLastSourceSequence;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *outputCallbackLatencies;
@@ -388,6 +389,18 @@ static NSDictionary<NSString *, NSString *> *LumenProbeSelectedDiagnostics(
     @"videoToolboxAppliedBitrateKbps",
     @"videoToolboxConfiguredPrioritizeEncodingSpeedOverQuality",
     @"videoToolboxConfiguredThroughputMode",
+    @"videoToolboxStagingMode",
+    @"videoToolboxStagedSourceReleaseMode",
+    @"videoToolboxMetalStagePoolCapacity",
+    @"videoToolboxMetalStageGPUCopyInFlight",
+    @"videoToolboxMetalStageSubmissionCount",
+    @"videoToolboxMetalStageCompletionCount",
+    @"videoToolboxMetalStageBusyDropCount",
+    @"videoToolboxMetalStagePoolAllocationFailureCount",
+    @"videoToolboxMetalStageTextureFailureCount",
+    @"videoToolboxMetalStageCommandBufferFailureCount",
+    @"videoToolboxMetalStageValidationFailureCount",
+    @"videoToolboxMetalStageLastError",
     @"videoToolboxEstimatedOutputBitrateKbps",
     @"videoToolboxMaxInflightStagingSlots",
     @"videoToolboxOutputWindowFrameRate",
@@ -395,6 +408,8 @@ static NSDictionary<NSString *, NSString *> *LumenProbeSelectedDiagnostics(
     @"videoToolboxAdmissionWaitMaximumMilliseconds",
     @"videoToolboxEncodeInvocationAverageMilliseconds",
     @"videoToolboxEncodeInvocationMaximumMilliseconds",
+    @"videoToolboxMetalStageAverageMilliseconds",
+    @"videoToolboxMetalStageMaximumMilliseconds",
     @"videoToolboxEncodeToCallbackAverageMilliseconds",
     @"videoToolboxEncodeToCallbackMaximumMilliseconds",
     @"videoToolboxOutputOwnerQueueWaitAverageMilliseconds",
@@ -420,6 +435,17 @@ static void LumenProbeDrainForwardedFrames(
   LumenPipelineProbeCounters *counters,
   BOOL acknowledgeBootstrapFrames
 ) {
+  while (true) {
+    LumenMacEncodedCaptureEventRecord event =
+      LumenMacBridgeControllerPopNextForwardedEvent(controller, NULL, 0);
+    if (!event.has_value) {
+      break;
+    }
+    if (counters != nil && event.kind == LumenMacCaptureEventKindFailed) {
+      counters.captureFailureCount += 1;
+    }
+  }
+
   while (true) {
     CMSampleBufferRef sampleBuffer = NULL;
     LumenMacEncodedCaptureFrameRecord frame =
@@ -638,6 +664,7 @@ static int LumenProbeRunProductionPipeline(
     @"bootstrapAcknowledgementFailureCount": @(
       counters.bootstrapAcknowledgementFailureCount
     ),
+    @"captureFailureCount": @(counters.captureFailureCount),
     @"startupToFirstFrameMilliseconds": @(
       (double)(measurementStartNanos - startupNanos) / 1e6
     ),
@@ -662,7 +689,9 @@ static int LumenProbeRunProductionPipeline(
   } mutableCopy];
   [result addEntriesFromDictionary:stimulusMetrics];
   LumenProbePrintJSON(result);
-  return acknowledged && counters.bootstrapAcknowledgementFailureCount == 0
+  return acknowledged &&
+      counters.bootstrapAcknowledgementFailureCount == 0 &&
+      counters.captureFailureCount == 0
     ? 0
     : 9;
 }

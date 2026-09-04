@@ -140,6 +140,7 @@ let project = Project(
                 .sdk(name: "CoreAudio", type: .framework),
                 .sdk(name: "CoreVideo", type: .framework),
                 .sdk(name: "IOSurface", type: .framework),
+                .sdk(name: "Metal", type: .framework),
                 .sdk(name: "Security", type: .framework),
                 .sdk(name: "ScreenCaptureKit", type: .framework),
                 .sdk(name: "VideoToolbox", type: .framework)

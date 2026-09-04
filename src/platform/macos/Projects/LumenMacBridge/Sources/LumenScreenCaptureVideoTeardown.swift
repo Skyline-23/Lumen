@@ -124,6 +124,12 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func completeCaptureOutputLifecycle() async {
+        // A committed Metal blit still owns the compositor lease and the
+        // encoder-owned pool slot until its completion handler returns to the
+        // runtime queue.  Drain that GPU boundary before asking VideoToolbox
+        // to complete/invalidate, so neither lifecycle can race the staging
+        // resources or admit an old destination into a new epoch.
+        await drainSkyLightMetalStaging()
         await outputLifecycle.completeAndInvalidate(
             completeFrames: { [self] in
                 encoderQueue.sync {
@@ -144,6 +150,21 @@ extension LumenScreenCaptureVideoRuntime {
                 }
             }
         )
+        queue.sync {
+            releaseSkyLightMetalStaging()
+        }
+    }
+
+    func drainSkyLightMetalStaging() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                if self.skyLightMetalStagingAdmission.isCopyInFlight {
+                    self.skyLightMetalCopyDrainWaiters.append(continuation)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     func finishCaptureStop(

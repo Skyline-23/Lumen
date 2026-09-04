@@ -19,10 +19,10 @@ struct LumenEncodedFrameContext: @unchecked Sendable {
     /// the two existing booleans (`requiresBootstrapAcknowledgement` and
     /// `isRepairKeyFrame`).
     let requiresBootstrapAcknowledgement: Bool
-    // The SkyLight callback's IOSurface use-count lease must remain alive
-    // until VideoToolbox emits (or cancels) this submission. Keeping it in the
-    // output lifecycle context prevents the compositor surface from being
-    // recycled while the hardware encoder still reads it.
+    // Direct callback-backed sources may carry a SkyLight IOSurface lease
+    // through VideoToolbox.  The async Metal SkyLight path releases its lease
+    // at GPU completion and therefore submits an encoder-owned destination
+    // with this field nil.
     let sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease?
 }
 
@@ -172,6 +172,21 @@ struct LumenPendingVideoBootstrapSource: @unchecked Sendable {
     let duration: CMTime
     let sequenceNumber: UInt64
     let sourceSurfaceLease: LumenMacSkyLightDisplayStreamFrameLease?
+    let hasValidatedEncoderOrdering: Bool
+
+    func markingEncoderOrderingValidated()
+        -> LumenPendingVideoBootstrapSource
+    {
+        LumenPendingVideoBootstrapSource(
+            imageBuffer: imageBuffer,
+            presentationTime: presentationTime,
+            displayTime: displayTime,
+            duration: duration,
+            sequenceNumber: sequenceNumber,
+            sourceSurfaceLease: sourceSurfaceLease,
+            hasValidatedEncoderOrdering: true
+        )
+    }
 }
 
 enum LumenEncoderSubmissionAttempt<Result: Sendable>: Sendable {

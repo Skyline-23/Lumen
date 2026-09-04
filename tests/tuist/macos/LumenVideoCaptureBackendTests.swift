@@ -64,6 +64,57 @@ final class LumenVideoCaptureBackendTests: XCTestCase {
         }
     }
 
+    func testPreviouslyValidatedPendingSourceCanBeReofferedAfterBootstrapAck()
+        throws
+    {
+        let runtime = try LumenScreenCaptureVideoRuntime(
+            configuration: LumenMacCaptureConfiguration(
+                displayID: 42,
+                codec: .hevc,
+                videoProfile: .hevcMain,
+                chromaSubsampling: .yuv420,
+                bitDepth: 8,
+                dynamicRange: .sdr,
+                targetFrameRate: 120
+            ),
+            callbacks: .init(frameHandler: { _ in }, eventHandler: nil),
+            statisticsHandler: { _ in },
+            terminationHandler: { _ in }
+        )
+        var pixelBufferValue: CVPixelBuffer?
+        XCTAssertEqual(
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                2,
+                2,
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                nil,
+                &pixelBufferValue
+            ),
+            kCVReturnSuccess
+        )
+        let pixelBuffer = try XCTUnwrap(pixelBufferValue)
+
+        runtime.queue.sync {
+            let source = runtime.makePendingSource(
+                imageBuffer: pixelBuffer,
+                presentationTime: CMTime(value: 1, timescale: 120),
+                sourceDisplayTime: 1
+            )
+            XCTAssertFalse(source.hasValidatedEncoderOrdering)
+
+            let firstOffer = runtime.validatedEncoderSourceForSubmission(source)
+            XCTAssertNotNil(firstOffer)
+            XCTAssertTrue(firstOffer?.hasValidatedEncoderOrdering == true)
+
+            let reoffer = firstOffer.flatMap {
+                runtime.validatedEncoderSourceForSubmission($0)
+            }
+            XCTAssertEqual(reoffer?.sequenceNumber, source.sequenceNumber)
+            XCTAssertFalse(runtime.terminalContractFailureReported)
+        }
+    }
+
     func testSDR420UsesAVFoundationScreenInput() {
         let configuration = LumenMacCaptureConfiguration(
             displayID: 42,

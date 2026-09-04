@@ -35,10 +35,56 @@ extension LumenScreenCaptureVideoRuntime {
         do {
             try await startCapture()
         } catch {
+            await rollbackFailedCaptureStart()
             await finishLifecycleStart()
             throw error
         }
         await finishLifecycleStart()
+    }
+
+    /// A start failure can happen after `prepareVideoCapture()` has created a
+    /// VideoToolbox session but before any capture backend has published its
+    /// running state.  Do not rely on the outer encoded-session coordinator to
+    /// call `stop()` later: direct runtime users and cancellation races can
+    /// leave this runtime without another lifecycle transition.  Roll back the
+    /// complete native media stack here, while the start flight still owns the
+    /// transition.
+    func rollbackFailedCaptureStart() async {
+        queue.sync {
+            compressionSessionAvailable = false
+            stopping = true
+            pendingVideoBootstrapSource = nil
+            _ = encoderAdmission.beginStopping()
+        }
+        encoderQueue.sync {
+            adaptiveVideoDeliveryPolicy.beginStopping()
+        }
+        // A submit closure may already be inside the synchronous VT call.  It
+        // must return before the session is completed or invalidated.
+        encoderAdmission.waitUntilSubmissionReturns()
+
+        // Each backend owns a different stop boundary.  They are all
+        // idempotent, so walking all three paths also covers a partially
+        // published start that failed between registration and publication.
+        _ = await stopActiveCaptureStream()
+        _ = await stopActiveAVFoundationCapture()
+        _ = await stopActiveSkyLightDisplayStream()
+
+        // Drain Metal and VideoToolbox in the same order as a normal stop.  In
+        // particular, a GPU blit may still own the source IOSurface while the
+        // VT output lifecycle is being completed.
+        await completeCaptureOutputLifecycle()
+        let rollbackState = queue.sync {
+            statistics.isRunning = false
+            lifecycleStopRequested = false
+            return skyLightMetalStagingResources != nil
+        }
+        let compressionSessionPresent = encoderQueue.sync {
+            compressionSession != nil
+        }
+        Self.pipelineLogger.notice(
+            "stage=capture-start-rollback-complete compression-session-present=\(compressionSessionPresent, privacy: .public) staging-resources-present=\(rollbackState, privacy: .public)"
+        )
     }
 
     func startCapture() async throws {
@@ -298,6 +344,21 @@ extension LumenScreenCaptureVideoRuntime {
             sourceWidth: sourceWidth,
             sourceHeight: sourceHeight
         )
+        do {
+            try prepareSkyLightMetalStaging(
+                width: prepared.width,
+                height: prepared.height,
+                pixelFormat: prepared.plan.pixelFormat
+            )
+        } catch {
+            queue.sync {
+                releaseSkyLightMetalStaging()
+            }
+            throw LumenScreenCaptureError.skyLightStartFailed(
+                displayID,
+                "Metal staging resources unavailable: \(error.localizedDescription)"
+            )
+        }
         let requestedMatrix = configuration.encodedColorConfiguration.map {
             $0.yCbCrMatrix.imageBufferValue as String
         }
@@ -331,6 +392,9 @@ extension LumenScreenCaptureVideoRuntime {
                 )
             }
         ) else {
+            queue.sync {
+                releaseSkyLightMetalStaging()
+            }
             throw LumenScreenCaptureError.skyLightStartFailed(
                 displayID,
                 "Unable to create the raw SkyLight display stream."
@@ -356,6 +420,9 @@ extension LumenScreenCaptureVideoRuntime {
             try stream.start()
         } catch {
             await discardSkyLightDisplayStream(stream, streamIdentity: streamIdentity)
+            queue.sync {
+                releaseSkyLightMetalStaging()
+            }
             // Keep the private API's original NSError domain/code intact. The
             // caller needs the entitlement/TCC/format reason to classify this
             // fail-closed path; reducing it to a localized string loses that
@@ -420,6 +487,87 @@ extension LumenScreenCaptureVideoRuntime {
             "target-fps=\(configuration.effectiveTargetFrameRate)",
             "stream-start-ms=\(startMilliseconds)"
         ].joined(separator: " ")
+    }
+
+    func prepareSkyLightMetalStaging(
+        width: Int,
+        height: Int,
+        pixelFormat: OSType
+    ) throws {
+        let resources = try LumenSkyLightMetalStagingResources.make(
+            width: width,
+            height: height,
+            pixelFormat: pixelFormat
+        )
+        let installResources: () throws -> Void = { [self] in
+            dispatchPrecondition(condition: .onQueue(queue))
+            guard skyLightMetalStagingAdmission.inFlightCopyCount == 0,
+                  skyLightMetalCopyDrainWaiters.isEmpty else {
+                throw LumenSkyLightMetalStagingResourceError(
+                    "cannot replace Metal staging resources while copies or drain waiters are active"
+                )
+            }
+            // A reentrant prepare is safe only after the old generation has
+            // fully drained. Never reset admission over a live completion.
+            skyLightMetalStagingResources?.flush()
+            _ = skyLightMetalStagingGeneration.advance()
+            skyLightMetalStagingResources = resources
+            skyLightMetalStagingAdmission =
+                LumenSkyLightMetalStagingAdmission()
+            skyLightMetalCopyDrainWaiters.removeAll(keepingCapacity: false)
+            skyLightMetalStagingReleaseRequested = false
+            skyLightMetalStageSubmissionCount = 0
+            skyLightMetalStageCompletionCount = 0
+            skyLightMetalStageBusyDropCount = 0
+            skyLightMetalStagePoolAllocationFailureCount = 0
+            skyLightMetalStageTextureFailureCount = 0
+            skyLightMetalStageCommandBufferFailureCount = 0
+            skyLightMetalStageValidationFailureCount = 0
+            skyLightMetalStageTiming = LumenCaptureStageTimingAccumulator()
+            skyLightMetalStageLastError = nil
+        }
+        if DispatchQueue.getSpecific(key: Self.captureQueueSpecificKey) != nil {
+            try installResources()
+        } else {
+            try queue.sync(execute: installResources)
+        }
+        Self.startupLogger.notice(
+            "stage=skylight-metal-staging-ready dimensions=\(width, privacy: .public)x\(height, privacy: .public) pixel-format=\(auditFourCC(pixelFormat), privacy: .public) pool-capacity=\(LumenSkyLightMetalStagingPolicy.poolCapacity, privacy: .public) gpu-copy-inflight-bound=\(LumenSkyLightMetalStagingPolicy.maximumGPUCopiesInFlight, privacy: .public) mode=async-blit"
+        )
+    }
+
+    func releaseSkyLightMetalStaging() {
+        let releaseResources = { [self] in
+            dispatchPrecondition(condition: .onQueue(queue))
+            guard skyLightMetalStagingResources != nil else {
+                return
+            }
+            guard skyLightMetalStagingAdmission.canDrain else {
+                skyLightMetalStagingReleaseRequested = true
+                Self.pipelineLogger.error(
+                    "stage=skylight-metal-staging-release-deferred reason=gpu-copy-inflight count=\(self.skyLightMetalStagingAdmission.inFlightCopyCount, privacy: .public)"
+                )
+                return
+            }
+            // Retire the resource generation before clearing the pool. Any
+            // defensive late completion is then ignored without touching the
+            // next generation's admission count.
+            _ = skyLightMetalStagingGeneration.advance()
+            skyLightMetalStagingResources?.flush()
+            skyLightMetalStagingResources = nil
+            skyLightMetalStagingAdmission =
+                LumenSkyLightMetalStagingAdmission()
+            skyLightMetalStagingReleaseRequested = false
+            resumeSkyLightMetalStagingDrainWaitersIfNeeded()
+            Self.pipelineLogger.notice(
+                "stage=skylight-metal-staging-released submissions=\(self.skyLightMetalStageSubmissionCount, privacy: .public) completions=\(self.skyLightMetalStageCompletionCount, privacy: .public) busy-drops=\(self.skyLightMetalStageBusyDropCount, privacy: .public) pool-failures=\(self.skyLightMetalStagePoolAllocationFailureCount, privacy: .public) texture-failures=\(self.skyLightMetalStageTextureFailureCount, privacy: .public) command-failures=\(self.skyLightMetalStageCommandBufferFailureCount, privacy: .public) validation-failures=\(self.skyLightMetalStageValidationFailureCount, privacy: .public)"
+            )
+        }
+        if DispatchQueue.getSpecific(key: Self.captureQueueSpecificKey) != nil {
+            releaseResources()
+        } else {
+            queue.sync(execute: releaseResources)
+        }
     }
 
     func discardSkyLightDisplayStream(
