@@ -56,6 +56,44 @@ struct LumenVideoToolboxRateControl: Equatable, Sendable {
     }
 }
 
+/// Resolves the optional macOS 26+ VideoToolbox throughput-mode extension
+/// from the encoder's own runtime advertisement.  The mode is intentionally
+/// not represented by a public SDK constant: only an advertised `turbo` entry
+/// with one consistent numeric ID is eligible for use.
+enum LumenVideoToolboxThroughputModeResolver {
+    static func modePropertyKey() -> CFString {
+        "ThroughputMode" as CFString
+    }
+
+    static func supportedModesPropertyKey() -> CFString {
+        "SupportedThroughputModes" as CFString
+    }
+
+    static func advertisedTurboModeID(
+        from supportedModesValue: CFTypeRef
+    ) -> Int? {
+        guard let supportedModes = supportedModesValue as? NSDictionary,
+              let turboModes = supportedModes.object(forKey: "turbo") as? NSArray else {
+            return nil
+        }
+
+        let modeIDs = turboModes.compactMap { mode -> Int? in
+            guard let mode = mode as? NSDictionary,
+                  let modeID = mode.object(forKey: "ThroughputModeID") as? NSNumber,
+                  modeID.intValue > 0 else {
+                return nil
+            }
+            return modeID.intValue
+        }
+        guard let firstModeID = modeIDs.first,
+              modeIDs.count == turboModes.count,
+              modeIDs.allSatisfy({ $0 == firstModeID }) else {
+            return nil
+        }
+        return firstModeID
+    }
+}
+
 extension LumenScreenCaptureVideoRuntime {
     func createCompressionSession(width: Int, height: Int) throws {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
@@ -128,6 +166,14 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_AllowFrameReordering,
             value: false as CFBoolean
         )
+        // Remote presentation values encoder service time over offline visual
+        // optimization. This public VideoToolbox hint preserves the codec and
+        // GOP contract while selecting the hardware encoder's faster path.
+        prioritizesEncodingSpeedOverQuality = try setOptionalProperty(
+            kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+            value: true as CFBoolean
+        )
+        configureAdvertisedTurboThroughputMode()
         if configuration.codec == .hevc {
             try setProperty(
                 kVTCompressionPropertyKey_AllowOpenGOP,
@@ -351,6 +397,63 @@ extension LumenScreenCaptureVideoRuntime {
         return (status, value as? Bool)
     }
 
+    func configureAdvertisedTurboThroughputMode() {
+        dispatchPrecondition(condition: .onQueue(encoderQueue))
+        guard let compressionSession else { return }
+
+        var supportedProperties: CFDictionary?
+        let supportedPropertiesStatus =
+            VTSessionCopySupportedPropertyDictionary(
+                compressionSession,
+                supportedPropertyDictionaryOut: &supportedProperties
+            )
+        guard supportedPropertiesStatus == noErr,
+              let properties = supportedProperties as NSDictionary?,
+              properties.object(
+                  forKey: LumenVideoToolboxThroughputModeResolver.modePropertyKey()
+              ) != nil,
+              properties.object(
+                  forKey: LumenVideoToolboxThroughputModeResolver.supportedModesPropertyKey()
+              ) != nil else {
+            return
+        }
+
+        var supportedModes: CFTypeRef?
+        let supportedModesStatus = withUnsafeMutablePointer(to: &supportedModes) {
+            pointer in
+            VTSessionCopyProperty(
+                compressionSession,
+                key: LumenVideoToolboxThroughputModeResolver.supportedModesPropertyKey(),
+                allocator: kCFAllocatorDefault,
+                valueOut: UnsafeMutableRawPointer(pointer)
+            )
+        }
+        guard supportedModesStatus == noErr,
+              let supportedModes else {
+            return
+        }
+        guard let modeID =
+                LumenVideoToolboxThroughputModeResolver.advertisedTurboModeID(
+                    from: supportedModes
+                ) else {
+            return
+        }
+
+        do {
+            guard try setOptionalProperty(
+                LumenVideoToolboxThroughputModeResolver.modePropertyKey(),
+                value: modeID as CFNumber
+            ) else {
+                return
+            }
+            configuredThroughputMode = modeID
+        } catch {
+            // ThroughputMode is an optional runtime extension. Keep the
+            // existing public VideoToolbox path when an advertised value is
+            // rejected by this particular encoder instance.
+        }
+    }
+
     func resolveEncodingPlan() async throws -> LumenVideoToolboxEncodingPlan {
         var profiles: [LumenVideoToolboxProbeTarget: String] = [:]
         if configuration.requiredHardware444ProbeTarget != nil {
@@ -403,9 +506,10 @@ extension LumenScreenCaptureVideoRuntime {
     /// valid hardware encoder into a terminal capture failure when a property
     /// is simply unsupported.  Unexpected errors still fail the exact capture
     /// contract so the caller does not silently run with a broken session.
-    func setOptionalProperty(_ key: CFString, value: CFTypeRef) throws {
+    @discardableResult
+    func setOptionalProperty(_ key: CFString, value: CFTypeRef) throws -> Bool {
         dispatchPrecondition(condition: .onQueue(encoderQueue))
-        guard let compressionSession else { return }
+        guard let compressionSession else { return false }
         let status = VTSessionSetProperty(compressionSession, key: key, value: value)
         guard status == noErr
             || status == kVTPropertyNotSupportedErr
@@ -415,6 +519,7 @@ extension LumenScreenCaptureVideoRuntime {
                 status
             )
         }
+        return status == noErr
     }
 
     func completeCompressionFrames() -> OSStatus {

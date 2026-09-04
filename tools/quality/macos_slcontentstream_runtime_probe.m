@@ -384,6 +384,8 @@ static NSDictionary<NSString *, NSString *> *LumenProbeSelectedDiagnostics(
     @"videoToolboxPendingAdmissionDropCount",
     @"videoToolboxPendingAdmissionDropWindowRate",
     @"videoToolboxAppliedBitrateKbps",
+    @"videoToolboxConfiguredPrioritizeEncodingSpeedOverQuality",
+    @"videoToolboxConfiguredThroughputMode",
     @"videoToolboxEstimatedOutputBitrateKbps",
     @"videoToolboxMaxInflightStagingSlots",
     @"videoToolboxOutputWindowFrameRate",
@@ -453,6 +455,7 @@ static int LumenProbeRunProductionPipeline(
   CGDirectDisplayID displayID,
   size_t outputWidth,
   size_t outputHeight,
+  int32_t targetBitrateKbps,
   double duration,
   BOOL hdr,
   BOOL stimulus,
@@ -489,6 +492,7 @@ static int LumenProbeRunProductionPipeline(
   configuration.preprocess_strategy = LumenMacBridgePreprocessStrategyNone;
   configuration.queue_profile = LumenMacBridgeQueueProfileAuto;
   configuration.target_frame_rate = 120;
+  configuration.target_video_bitrate_kbps = targetBitrateKbps;
   configuration.requested_width = (int32_t)outputWidth;
   configuration.requested_height = (int32_t)outputHeight;
   configuration.sink_request.capability.gamut = hdr ? 3 : 1;
@@ -608,6 +612,7 @@ static int LumenProbeRunProductionPipeline(
     @"displayID": @(displayID),
     @"requestedWidth": @(outputWidth),
     @"requestedHeight": @(outputHeight),
+    @"targetBitrateKbps": @(targetBitrateKbps),
     @"hdr": @(hdr),
     @"stimulus": @(stimulus),
     @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",
@@ -671,23 +676,84 @@ int main(int argc, const char *argv[]) {
     double duration = durationArgument == nil
       ? 8.0
       : MAX(durationArgument.doubleValue, 1.0);
+    NSString *bitrateArgument = LumenProbeArgument(
+      argc,
+      argv,
+      @"--bitrate-kbps"
+    );
+    int32_t targetBitrateKbps = bitrateArgument == nil
+      ? 0
+      : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
-    OSType pixelFormat = hdr
-      ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-      : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    NSString *matrix = hdr
-      ? (__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_2020
-      : (__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2;
-    NSString *colorSpace = hdr
-      ? (__bridge NSString *)kCGColorSpaceITUR_2100_PQ
-      : nil;
+    NSString *pixelFormatArgument = LumenProbeArgument(
+      argc,
+      argv,
+      @"--pixel-format"
+    );
+    NSString *pixelFormatSelection = pixelFormatArgument == nil
+      ? (hdr ? @"x420" : @"420v")
+      : pixelFormatArgument.lowercaseString;
+    OSType pixelFormat = 0;
+    NSString *matrix = nil;
+    NSString *colorSpace = nil;
+    NSString *pixelFormatError = nil;
+    if ([pixelFormatSelection isEqualToString:@"bgra"] ||
+        [pixelFormatSelection isEqualToString:@"32bgra"]) {
+      pixelFormatSelection = @"bgra";
+      pixelFormat = kCVPixelFormatType_32BGRA;
+      if (hdr) {
+        pixelFormatError =
+          @"BGRA is an 8-bit SDR format; omit --hdr for this selector.";
+      }
+    } else if ([pixelFormatSelection isEqualToString:@"420v"]) {
+      pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+      matrix = (__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+      if (hdr) {
+        pixelFormatError =
+          @"420v is an 8-bit SDR format; omit --hdr for this selector.";
+      }
+    } else if ([pixelFormatSelection isEqualToString:@"x420"]) {
+      pixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+      matrix = (__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_2020;
+      colorSpace = (__bridge NSString *)kCGColorSpaceITUR_2100_PQ;
+      if (!hdr) {
+        pixelFormatError =
+          @"x420 is reserved for the HDR condition; add --hdr for this selector.";
+      }
+    } else {
+      pixelFormatError =
+        @"--pixel-format must be one of: bgra, 420v, x420.";
+    }
+
+    if (pixelFormatError != nil) {
+      LumenProbePrintJSON(@{
+        @"error": @"invalid-pixel-format-selector",
+        @"message": pixelFormatError,
+        @"pixelFormat": pixelFormatArgument ?: @"default",
+        @"hdr": @(hdr),
+        @"displayID": @(displayID),
+        @"onlineDisplays": onlineDisplays
+      });
+      return 2;
+    }
 
     if (LumenProbeHasFlag(argc, argv, @"--pipeline")) {
+      if (pixelFormatArgument != nil) {
+        LumenProbePrintJSON(@{
+          @"error": @"pixel-format-selector-only-raw",
+          @"message": @"--pixel-format applies only to the raw probe.",
+          @"pixelFormat": pixelFormatSelection,
+          @"displayID": @(displayID),
+          @"onlineDisplays": onlineDisplays
+        });
+        return 2;
+      }
       return LumenProbeRunProductionPipeline(
         displayID,
         outputWidth,
         outputHeight,
+        targetBitrateKbps,
         duration,
         hdr,
         stimulus,
@@ -886,6 +952,7 @@ int main(int argc, const char *argv[]) {
       @"requestedWidth": @(outputWidth),
       @"requestedHeight": @(outputHeight),
       @"requestedPixelFormat": LumenProbeFourCC(pixelFormat),
+      @"pixelFormatSelection": pixelFormatSelection,
       @"hdr": @(hdr),
       @"stimulus": @(stimulus),
       @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",

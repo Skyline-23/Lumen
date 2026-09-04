@@ -107,6 +107,7 @@ let lumenCaptureDiagnosticPrefixes = [
     "videoToolboxConfiguredMaximumRealTimeFrameRate=",
     "videoToolboxConfiguredMaxFrameDelayCount=",
     "videoToolboxConfiguredPrioritizeEncodingSpeedOverQuality=",
+    "videoToolboxConfiguredThroughputMode=",
     "videoToolboxConfiguredNumberOfSlices=",
     "videoToolboxConfiguredInputQueueMaxCount=",
     "videoToolboxConfiguredSourceFrameCount=",
