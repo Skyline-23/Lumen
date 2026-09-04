@@ -199,6 +199,8 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
 @property(nonatomic) uint64_t inferredSourceFrameCount;
 @property(nonatomic) uint64_t sourceSequenceGapCount;
 @property(nonatomic) uint64_t encodedBytes;
+@property(nonatomic) uint64_t bootstrapAcknowledgementCount;
+@property(nonatomic) uint64_t bootstrapAcknowledgementFailureCount;
 @property(nonatomic) uint64_t lastSourceSequence;
 @property(nonatomic) BOOL hasLastSourceSequence;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *outputCallbackLatencies;
@@ -415,7 +417,8 @@ static NSDictionary<NSString *, NSString *> *LumenProbeSelectedDiagnostics(
 
 static void LumenProbeDrainForwardedFrames(
   LumenMacBridgeController *controller,
-  LumenPipelineProbeCounters *counters
+  LumenPipelineProbeCounters *counters,
+  BOOL acknowledgeBootstrapFrames
 ) {
   while (true) {
     CMSampleBufferRef sampleBuffer = NULL;
@@ -429,6 +432,17 @@ static void LumenProbeDrainForwardedFrames(
     }
     if (!frame.has_value) {
       return;
+    }
+    if (acknowledgeBootstrapFrames &&
+        frame.requires_bootstrap_acknowledgement) {
+      BOOL resumed = LumenMacBridgeResumeVideoEncodingAfterCodecAck();
+      if (counters != nil) {
+        if (resumed) {
+          counters.bootstrapAcknowledgementCount += 1;
+        } else {
+          counters.bootstrapAcknowledgementFailureCount += 1;
+        }
+      }
     }
     if (counters != nil) {
       counters.encodedFrameCount += 1;
@@ -556,7 +570,7 @@ static int LumenProbeRunProductionPipeline(
   }
 
   BOOL acknowledged = LumenMacBridgeResumeVideoEncodingAfterCodecAck();
-  LumenProbeDrainForwardedFrames(controller, nil);
+  LumenProbeDrainForwardedFrames(controller, nil, NO);
   initialSnapshot =
     LumenMacBridgeControllerCopyVideoForwardingSnapshot(controller);
 
@@ -566,7 +580,7 @@ static int LumenProbeRunProductionPipeline(
   uint64_t measurementDeadline = measurementStartNanos +
     (uint64_t)(duration * (double)NSEC_PER_SEC);
   while (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < measurementDeadline) {
-    LumenProbeDrainForwardedFrames(controller, counters);
+    LumenProbeDrainForwardedFrames(controller, counters, YES);
     if (stimulusWindow != nil) {
       NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.001];
       [[NSRunLoop currentRunLoop]
@@ -576,7 +590,7 @@ static int LumenProbeRunProductionPipeline(
       usleep(1000);
     }
   }
-  LumenProbeDrainForwardedFrames(controller, counters);
+  LumenProbeDrainForwardedFrames(controller, counters, YES);
   uint64_t measurementEndNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 
   LumenMacEncodedCaptureIngressSnapshot finalSnapshot =
@@ -618,6 +632,12 @@ static int LumenProbeRunProductionPipeline(
     @"stimulusMode": stimulus ? @"cadisplaylink-dirty-layer" : @"none",
     @"targetFPS": @120,
     @"codecAcknowledged": @(acknowledged),
+    @"bootstrapAcknowledgementCount": @(
+      counters.bootstrapAcknowledgementCount
+    ),
+    @"bootstrapAcknowledgementFailureCount": @(
+      counters.bootstrapAcknowledgementFailureCount
+    ),
     @"startupToFirstFrameMilliseconds": @(
       (double)(measurementStartNanos - startupNanos) / 1e6
     ),
@@ -642,7 +662,9 @@ static int LumenProbeRunProductionPipeline(
   } mutableCopy];
   [result addEntriesFromDictionary:stimulusMetrics];
   LumenProbePrintJSON(result);
-  return acknowledged ? 0 : 9;
+  return acknowledged && counters.bootstrapAcknowledgementFailureCount == 0
+    ? 0
+    : 9;
 }
 
 int main(int argc, const char *argv[]) {
