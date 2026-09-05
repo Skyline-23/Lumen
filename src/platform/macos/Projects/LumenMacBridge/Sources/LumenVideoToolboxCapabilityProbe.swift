@@ -4,6 +4,180 @@ import Darwin
 import Foundation
 import VideoToolbox
 
+/// Entry point used only by the existing isolated screen-measurement tool.
+/// The fixture is immutable; orchestration is actor-isolated and encoding uses
+/// the product runtime, including its two-slot/latest-pending admission policy.
+@objc(LumenEncoderReplayProbe)
+public final class LumenEncoderReplayProbe: NSObject {
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:completion:)
+    public static func run(
+        frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
+        duration: Double, completion: @escaping @Sendable (String) -> Void
+    ) {
+        guard !frames.isEmpty, frames.count <= 32, width > 0, height > 0,
+              duration.isFinite, (1 ... 60).contains(duration), bitrate > 0 else {
+            completion("{\"error\":\"invalid-production-replay-arguments\"}")
+            return
+        }
+        let buffers = frames.map { $0 as! CVPixelBuffer }
+        let fixture = LumenEncoderReplayFixture(buffers: buffers)
+        Task {
+            let runner = LumenEncoderReplayRunner()
+            completion(await runner.run(
+                fixture: fixture, width: width, height: height,
+                hdr: hdr, bitrate: bitrate, duration: duration
+            ))
+        }
+    }
+}
+
+private struct LumenEncoderReplayFixture: @unchecked Sendable {
+    let buffers: [CVPixelBuffer]
+}
+
+// Only the existing runtime's capture/output queue mutates these metrics.
+// VideoToolbox callback ordering must remain intact at this C boundary.
+private final class LumenEncoderReplayMetrics: @unchecked Sendable {
+    var latencies: [Double] = []
+    var frameAges: [Double] = []
+    var bytes = 0
+    var hdrValid = true
+    var keyFrames = 0
+
+    func record(_ frame: LumenEncodedFrame, requiresHDR: Bool) {
+        if let latency = frame.outputCallbackLatencyMilliseconds {
+            latencies.append(latency)
+        }
+        frameAges.append(LumenMachTime.milliseconds(
+            from: frame.sourceDisplayTime, to: mach_absolute_time()
+        ))
+        bytes += CMSampleBufferGetTotalSampleSize(frame.sampleBuffer)
+        if frame.isKeyFrame { keyFrames += 1 }
+        if requiresHDR {
+            let report = frame.hdrValidationReport
+            hdrValid = hdrValid && frame.isHDRSignaled &&
+                report.transferFunction == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) &&
+                report.hasHDRDisplayMetadata && report.hasContentLightLevelInfo
+        }
+    }
+}
+
+private actor LumenEncoderReplayRunner {
+    private var runtime: LumenScreenCaptureVideoRuntime?
+
+    private func acknowledge() async {
+        _ = await runtime?.resumeVideoEncodingAfterCodecAck()
+    }
+
+    func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
+             hdr: Bool, bitrate: Int, duration: Double) async -> String {
+        let metrics = LumenEncoderReplayMetrics()
+        do {
+            let configuration = LumenMacCaptureConfiguration(
+                displayID: 0, codec: .hevc,
+                videoProfile: hdr ? .hevcMain10 : .hevcMain,
+                chromaSubsampling: .yuv420, bitDepth: hdr ? 10 : 8,
+                dynamicRange: hdr ? .hdr10 : .sdr,
+                targetFrameRate: 120, targetVideoBitRateKbps: bitrate,
+                requestedWidth: width, requestedHeight: height,
+                sinkRequest: .init(
+                    capability: .init(gamut: hdr ? .rec2020 : .srgb,
+                                      transfer: hdr ? .pq : .sdr,
+                                      supportsFrameGatedHDR: true,
+                                      supportsPerFrameHDRMetadata: true),
+                    dynamicRangeTransport: hdr ? LumenMacDynamicRangeTransportFrameGatedHDR : LumenMacDynamicRangeTransportSDR
+                ),
+                effectiveDisplayState: .init(gamut: hdr ? .rec2020 : .srgb,
+                                             transfer: hdr ? .pq : .sdr)
+            )
+            let runtime = try LumenScreenCaptureVideoRuntime(
+                configuration: configuration,
+                callbacks: .init(frameHandler: { [self] frame in
+                    metrics.record(frame, requiresHDR: hdr)
+                    if frame.requiresBootstrapAcknowledgement {
+                        Task { await acknowledge() }
+                    }
+                }, eventHandler: nil),
+                statisticsHandler: { _ in }, terminationHandler: { _ in }
+            )
+            self.runtime = runtime
+            _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
+            runtime.queue.sync { runtime.statistics.isRunning = true }
+            for buffer in fixture.buffers {
+                guard CVPixelBufferGetWidth(buffer) == width,
+                      CVPixelBufferGetHeight(buffer) == height,
+                      CVPixelBufferGetPixelFormatType(buffer) == (hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) else {
+                    throw LumenExactCaptureError.invalidFormat("Replay fixture dimensions or pixel format mismatch")
+                }
+            }
+            let clock = ContinuousClock()
+            let start = clock.now
+            var offered = 0
+            var skippedProducerDeadlines = 0
+            let total = Int(duration * 120)
+            while offered < total {
+                let deadline = start.advanced(by: .nanoseconds(Int64(offered) * 1_000_000_000 / 120))
+                try await clock.sleep(until: deadline)
+                // Do not burst old attempts after a producer scheduling stall.
+                let elapsed = start.duration(to: clock.now)
+                let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                let due = min(Int(seconds * 120), total - 1)
+                if due > offered + 1 {
+                    skippedProducerDeadlines += due - offered
+                    offered = due
+                }
+                let index = offered
+                let displayTime = mach_absolute_time()
+                let buffer = fixture.buffers[index % fixture.buffers.count]
+                await withCheckedContinuation { continuation in
+                    runtime.queue.async {
+                        let source = runtime.makePendingSource(
+                            imageBuffer: buffer,
+                            presentationTime: CMTime(value: Int64(index), timescale: 120),
+                            sourceDisplayTime: displayTime
+                        )
+                        runtime.admitPendingSource(source)
+                        continuation.resume()
+                    }
+                }
+                offered += 1
+                if offered % 120 == 0 { _ = await runtime.requestPeriodicKeyFrame() }
+            }
+            await runtime.stop()
+            let elapsed = start.duration(to: clock.now)
+            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            let result: [String: Any] = runtime.queue.sync {
+                func percentile(_ values: [Double], _ p: Double) -> Double {
+                    guard !values.isEmpty else { return 0 }
+                    let sorted = values.sorted()
+                    return sorted[min(Int(ceil(Double(sorted.count - 1) * p)), sorted.count - 1)]
+                }
+                return [
+                    "mode": "production-encoder-immutable-replay", "outputFPS": Double(metrics.latencies.count) / seconds,
+                    "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
+                    "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
+                    "callbackP50Milliseconds": percentile(metrics.latencies, 0.5),
+                    "callbackP95Milliseconds": percentile(metrics.latencies, 0.95),
+                    "frameAgeP50Milliseconds": percentile(metrics.frameAges, 0.5),
+                    "frameAgeP95Milliseconds": percentile(metrics.frameAges, 0.95),
+                    "pendingDrops": runtime.encoderPendingDropCount,
+                    "processingFailures": runtime.statistics.processingFailureCount,
+                    "hdrValid": metrics.hdrValid && !metrics.latencies.isEmpty,
+                    "keyFrames": metrics.keyFrames, "encodedBytes": metrics.bytes,
+                    "diagnostics": runtime.makeStatisticsNotes(width: width, height: height)
+                ]
+            }
+            self.runtime = nil
+            return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+        } catch {
+            await runtime?.stop()
+            runtime = nil
+            let result = ["error": error.localizedDescription]
+            return String(decoding: (try? JSONSerialization.data(withJSONObject: result)) ?? Data(), as: UTF8.self)
+        }
+    }
+}
+
 public struct LumenVideoToolboxProbeEnvironment: Hashable, Codable, Sendable {
     public let osBuild: String
     public let hardwareIdentity: String

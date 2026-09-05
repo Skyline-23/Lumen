@@ -15,6 +15,12 @@
 #include <time.h>
 #include <unistd.h>
 
+@interface LumenEncoderReplayProbe : NSObject
++ (void)runWithFrames:(NSArray *)frames width:(NSInteger)width height:(NSInteger)height
+  hdr:(BOOL)hdr bitrate:(NSInteger)bitrate duration:(double)duration
+  completion:(void (^)(NSString *))completion;
+@end
+
 @interface LumenContentStreamProbeState : NSObject
 @property(nonatomic) uint64_t callbackCount;
 @property(nonatomic) uint64_t completeCount;
@@ -1004,7 +1010,8 @@ int main(int argc, const char *argv[]) {
       : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
-    BOOL replayCompare = LumenProbeHasFlag(argc,argv,@"--replay-compare");
+    BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
+    BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     if (!useSCK && ![sourceMode isEqualToString:@"private"]) return 13;
@@ -1272,6 +1279,25 @@ int main(int argc, const char *argv[]) {
     if (replayCompare) {
       if (replayFrames.count != 16) {
         LumenProbePrintJSON(@{@"error":@"replay-fixture-incomplete",@"frames":@(replayFrames.count)}); return 15;
+      }
+      if (productionReplay) {
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        __block NSString *output;
+        [LumenEncoderReplayProbe runWithFrames:replayFrames width:outputWidth height:outputHeight
+          hdr:hdr bitrate:targetBitrateKbps duration:duration completion:^(NSString *json) {
+            output = json; dispatch_semaphore_signal(done);
+          }];
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration+30];
+        while (dispatch_semaphore_wait(done,DISPATCH_TIME_NOW) != 0) {
+          if (deadline.timeIntervalSinceNow <= 0) {
+            LumenProbePrintJSON(@{@"error":@"production-replay-timeout"}); return 17;
+          }
+          LumenProbeRunApplicationForDuration(.005);
+        }
+        fprintf(stdout,"%s\n",output.UTF8String);
+        NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[output dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+        return result && !result[@"error"] && [result[@"hdrValid"] boolValue] &&
+          [result[@"processingFailures"] intValue] == 0 ? 0 : 18;
       }
       NSMutableArray *comparisons = [NSMutableArray array];
       BOOL passed = YES;
