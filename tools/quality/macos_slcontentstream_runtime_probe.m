@@ -392,8 +392,8 @@ static NSArray<NSDictionary<NSString *, id> *> *LumenProbeOnlineDisplays(void) {
         @"main": @(CGDisplayIsMain(displayID) != 0),
         @"logicalWidth": @(CGRectGetWidth(CGDisplayBounds(displayID))),
         @"logicalHeight": @(CGRectGetHeight(CGDisplayBounds(displayID))),
-        @"pixelWidth": @(CGDisplayPixelsWide(displayID)),
-        @"pixelHeight": @(CGDisplayPixelsHigh(displayID)),
+        @"pixelWidth": @(mode ? CGDisplayModeGetPixelWidth(mode) : CGDisplayPixelsWide(displayID)),
+        @"pixelHeight": @(mode ? CGDisplayModeGetPixelHeight(mode) : CGDisplayPixelsHigh(displayID)),
         @"refreshRate": @(refreshRate)
       }];
       if (mode != NULL) {
