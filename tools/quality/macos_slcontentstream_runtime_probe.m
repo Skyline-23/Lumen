@@ -934,6 +934,35 @@ static int LumenProbeRunProductionPipeline(
 static LumenMacVirtualDisplay *LumenProbeOwnedDisplay;
 static void LumenProbeDestroyOwnedDisplay(void) { [LumenProbeOwnedDisplay destroy]; LumenProbeOwnedDisplay = nil; }
 
+// A bounded immutable replay fixture separates encoder admission from live
+// compositor ownership. Copies happen only while collecting the fixture, never
+// during the measured encoder runs. Every mode receives these exact same frames.
+static CVPixelBufferRef LumenProbeCopyFrame(CVPixelBufferRef source) {
+  CVPixelBufferRef copy = NULL;
+  NSDictionary *attributes = @{(__bridge id)kCVPixelBufferIOSurfacePropertiesKey:@{}};
+  if (CVPixelBufferCreate(NULL,CVPixelBufferGetWidth(source),CVPixelBufferGetHeight(source),
+      CVPixelBufferGetPixelFormatType(source),(__bridge CFDictionaryRef)attributes,&copy) != kCVReturnSuccess) return NULL;
+  CVReturn readStatus = CVPixelBufferLockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+  CVReturn writeStatus = CVPixelBufferLockBaseAddress(copy,0);
+  if (readStatus != kCVReturnSuccess || writeStatus != kCVReturnSuccess) {
+    if (readStatus == kCVReturnSuccess) CVPixelBufferUnlockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+    if (writeStatus == kCVReturnSuccess) CVPixelBufferUnlockBaseAddress(copy,0);
+    CFRelease(copy); return NULL;
+  }
+  for (size_t plane=0; plane<CVPixelBufferGetPlaneCount(source); plane++) {
+    size_t sourceStride = CVPixelBufferGetBytesPerRowOfPlane(source,plane);
+    size_t targetStride = CVPixelBufferGetBytesPerRowOfPlane(copy,plane);
+    const uint8_t *src = CVPixelBufferGetBaseAddressOfPlane(source,plane);
+    uint8_t *dst = CVPixelBufferGetBaseAddressOfPlane(copy,plane);
+    for (size_t row=0; row<CVPixelBufferGetHeightOfPlane(source,plane); row++)
+      memcpy(dst+row*targetStride,src+row*sourceStride,MIN(sourceStride,targetStride));
+  }
+  CVPixelBufferUnlockBaseAddress(copy,0);
+  CVPixelBufferUnlockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+  CVBufferPropagateAttachments(source,copy);
+  return copy;
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
@@ -975,11 +1004,12 @@ int main(int argc, const char *argv[]) {
       : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
+    BOOL replayCompare = LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     if (!useSCK && ![sourceMode isEqualToString:@"private"]) return 13;
     if (LumenProbeHasFlag(argc,argv,@"--pipeline") &&
-        (useSCK || LumenProbeArgument(argc,argv,@"--encoder-mode"))) {
+        (useSCK || replayCompare || LumenProbeArgument(argc,argv,@"--encoder-mode"))) {
       LumenProbePrintJSON(@{@"error":@"source-and-encoder-selectors-only-raw"}); return 13;
     }
     if (LumenProbeHasFlag(argc, argv, @"--virtual-display")) {
@@ -1110,6 +1140,7 @@ int main(int argc, const char *argv[]) {
     );
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
     NSString *encoderMode = LumenProbeArgument(argc,argv,@"--encoder-mode");
+    if (replayCompare && (encoderMode || pixelFormat == kCVPixelFormatType_32BGRA)) return 13;
     if (encoderMode && ![@[@"regular",@"low-latency"] containsObject:encoderMode]) {
       LumenProbePrintJSON(@{@"error":@"invalid-encoder-mode"}); return 13;
     }
@@ -1119,6 +1150,7 @@ int main(int argc, const char *argv[]) {
     if (encoder && !encoder.ready) { LumenProbePrintJSON([encoder finish]); return 14; }
     LumenContentStreamProbeState *state =
       [[LumenContentStreamProbeState alloc] init];
+    NSMutableArray *replayFrames = [NSMutableArray array];
     LumenProbeStimulus *stimulusWindow = nil;
     if (stimulus) {
       [NSApplication sharedApplication];
@@ -1166,7 +1198,13 @@ int main(int argc, const char *argv[]) {
             break;
         }
       }
-      if (signalFirstFrame) {
+      if (replayCompare && replayFrames.count < 16 && pixelBuffer &&
+          status == kCGDisplayStreamFrameStatusFrameComplete) {
+        CVPixelBufferRef copy = LumenProbeCopyFrame(pixelBuffer);
+        if (copy) { [replayFrames addObject:CFBridgingRelease(copy)]; }
+        if (replayFrames.count == 16) dispatch_semaphore_signal(firstFrame);
+      }
+      if (signalFirstFrame && !replayCompare) {
         dispatch_semaphore_signal(firstFrame);
       }
       if (status == kCGDisplayStreamFrameStatusFrameComplete && pixelBufferStatus == kCVReturnSuccess && pixelBuffer)
@@ -1216,11 +1254,8 @@ int main(int argc, const char *argv[]) {
       return 4;
     }
 
-    long firstFrameWait = dispatch_semaphore_wait(
-      firstFrame,
-      dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC))
-    );
-    if (firstFrameWait == 0) {
+    long firstFrameWait = LumenProbeWaitPumping(firstFrame) ? 0 : 1;
+    if (firstFrameWait == 0 && !replayCompare) {
       if (stimulusWindow != nil) {
         LumenProbeRunApplicationForDuration(duration);
       } else {
@@ -1234,6 +1269,36 @@ int main(int argc, const char *argv[]) {
       ? @{}
       : [stimulusWindow metrics];
     [stimulusWindow stop];
+    if (replayCompare) {
+      if (replayFrames.count != 16) {
+        LumenProbePrintJSON(@{@"error":@"replay-fixture-incomplete",@"frames":@(replayFrames.count)}); return 15;
+      }
+      NSMutableArray *comparisons = [NSMutableArray array];
+      BOOL passed = YES;
+      for (NSString *mode in @[@"regular",@"low-latency",@"regular"]) {
+        LumenProbeEncoder *replayEncoder = [[LumenProbeEncoder alloc] initWithQueue:callbackQueue
+          width:(int)outputWidth height:(int)outputHeight hdr:hdr bitrate:targetBitrateKbps
+          lowLatency:[mode isEqualToString:@"low-latency"]];
+        uint64_t replayStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        uint64_t deadline = replayStart+(uint64_t)(duration*1e9);
+        uint64_t attempts = 0;
+        while (replayEncoder.ready && clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < deadline) {
+          uint64_t next = replayStart+(attempts*NSEC_PER_SEC)/120;
+          if (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < next) { LumenProbeRunApplicationForDuration(.001); continue; }
+          CVPixelBufferRef buffer = (__bridge CVPixelBufferRef)replayFrames[attempts++ % replayFrames.count];
+          dispatch_sync(callbackQueue, ^{ [replayEncoder accept:buffer displayTime:0]; });
+        }
+        NSMutableDictionary *metrics = [[replayEncoder finish] mutableCopy];
+        metrics[@"mode"] = mode; metrics[@"attempts"] = @(attempts);
+        [comparisons addObject:metrics];
+        passed &= [metrics[@"encoderReady"] boolValue] && [metrics[@"encoderErrors"] intValue] == 0 &&
+          [metrics[@"freshHardwareDecodedFrames"] intValue] == 3;
+      }
+      LumenProbePrintJSON(@{@"mode":@"immutable-fixture-encoder-only",@"fixtureFrames":@(replayFrames.count),
+        @"width":@(outputWidth),@"height":@(outputHeight),@"hdr":@(hdr),@"targetBitrateKbps":@(targetBitrateKbps),
+        @"targetFPS":@120,@"durationPerMode":@(duration),@"captureStoppedBeforeMeasurement":@YES,@"comparisons":comparisons});
+      return passed ? 0 : 16;
+    }
 
     uint64_t callbackCount = 0;
     uint64_t completeCount = 0;
@@ -1318,8 +1383,8 @@ int main(int argc, const char *argv[]) {
       @"displayDeltaP95Milliseconds": @(
         LumenProbePercentile(displayDeltas, 0.95)
       ),
-      @"firstFrameDropCount": @(stream.firstFrameDropCount),
-      @"cumulativeDropCount": @(stream.cumulativeDropCount),
+      @"firstFrameDropCount": useSCK ? (id)[NSNull null] : @(stream.firstFrameDropCount),
+      @"cumulativeDropCount": useSCK ? (id)[NSNull null] : @(stream.cumulativeDropCount),
       @"stopStatus": @(stopStatus),
       @"onlineDisplays": onlineDisplays
     } mutableCopy];
