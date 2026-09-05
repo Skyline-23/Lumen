@@ -494,22 +494,10 @@ extension LumenScreenCaptureVideoRuntime {
         height: Int,
         pixelFormat: OSType
     ) throws {
-        // Compression setup has completed before capture starts. Ask VT for
-        // its own IOSurface layout rather than feeding a separately allocated
-        // pool that may require an internal encoder input copy.
-        let encoderPixelBufferPool = encoderQueue.sync {
-            compressionSession.flatMap(VTCompressionSessionGetPixelBufferPool)
-        }
-        guard let encoderPixelBufferPool else {
-            throw LumenSkyLightMetalStagingResourceError(
-                "prepared encoder did not provide an input pixel-buffer pool"
-            )
-        }
         let resources = try LumenSkyLightMetalStagingResources.make(
             width: width,
             height: height,
-            pixelFormat: pixelFormat,
-            encoderPixelBufferPool: encoderPixelBufferPool
+            pixelFormat: pixelFormat
         )
         let installResources: () throws -> Void = { [self] in
             dispatchPrecondition(condition: .onQueue(queue))

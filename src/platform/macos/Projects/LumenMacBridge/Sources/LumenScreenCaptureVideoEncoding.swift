@@ -133,7 +133,6 @@ extension LumenScreenCaptureVideoRuntime {
                 kCVPixelBufferWidthKey: width,
                 kCVPixelBufferHeightKey: height,
                 kCVPixelBufferPixelFormatTypeKey: capturePixelFormat,
-                kCVPixelBufferMetalCompatibilityKey: true,
                 kCVPixelBufferIOSurfacePropertiesKey: [:]
             ] as CFDictionary,
             compressedDataAllocator: nil,

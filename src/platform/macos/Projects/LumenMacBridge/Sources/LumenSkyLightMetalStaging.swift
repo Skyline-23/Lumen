@@ -214,8 +214,7 @@ final class LumenSkyLightMetalStagingResources: @unchecked Sendable {
     static func make(
         width: Int,
         height: Int,
-        pixelFormat: OSType,
-        encoderPixelBufferPool: CVPixelBufferPool? = nil
+        pixelFormat: OSType
     ) throws -> LumenSkyLightMetalStagingResources {
         guard let format = LumenSkyLightMetalStagingFormat(
             pixelFormat: pixelFormat
@@ -250,8 +249,8 @@ final class LumenSkyLightMetalStagingResources: @unchecked Sendable {
             )
         }
 
-        var pixelBufferPool = encoderPixelBufferPool
-        let poolStatus = encoderPixelBufferPool != nil ? kCVReturnSuccess : CVPixelBufferPoolCreate(
+        var pixelBufferPool: CVPixelBufferPool?
+        let poolStatus = CVPixelBufferPoolCreate(
             kCFAllocatorDefault,
             [
                 kCVPixelBufferPoolMinimumBufferCountKey:
