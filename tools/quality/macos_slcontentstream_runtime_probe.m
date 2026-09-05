@@ -13,6 +13,7 @@
 #import "LumenMacBridge.h"
 
 #include <math.h>
+#include <dlfcn.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1038,6 +1039,40 @@ static NSDictionary *LumenProbeReplayFixtureAudit(NSArray *frames) {
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
+    if (LumenProbeHasFlag(argc, argv, @"--hevc-tile-capabilities")) {
+      // Discovery only: never creates a display or starts capture/encoding.
+      CFArrayRef list = NULL;
+      OSStatus listStatus = VTCopyVideoEncoderList(NULL, &list);
+      NSMutableArray *encoders = [NSMutableArray array];
+      for (NSDictionary *row in (__bridge NSArray *)list)
+        if ([row[(__bridge NSString *)kVTVideoEncoderList_CodecType] unsignedIntValue] == kCMVideoCodecType_HEVC)
+          [encoders addObject:row];
+      const CFStringRef *tileKey = dlsym(RTLD_DEFAULT, "kVTVideoEncoderSpecification_TiledCompression");
+      NSMutableArray *discoveries = [NSMutableArray array];
+      for (NSNumber *tiled in @[@NO, @YES]) {
+        if (tiled.boolValue && (!tileKey || !*tileKey)) continue;
+        NSMutableDictionary *spec = [@{(__bridge NSString *)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:@YES} mutableCopy];
+        if (tiled.boolValue) spec[(__bridge NSString *)*tileKey] = @YES;
+        CFStringRef encoderID = NULL;
+        CFDictionaryRef properties = NULL;
+        OSStatus status = VTCopySupportedPropertyDictionaryForEncoder(3840, 2160, kCMVideoCodecType_HEVC,
+          (__bridge CFDictionaryRef)spec, &encoderID, &properties);
+        NSMutableDictionary *relevant = [NSMutableDictionary dictionary];
+        for (NSString *key in (__bridge NSDictionary *)properties)
+          if ([key localizedCaseInsensitiveContainsString:@"tile"] ||
+              [key localizedCaseInsensitiveContainsString:@"parallel"] ||
+              [key isEqualToString:@"NumberOfSlices"] || [key isEqualToString:@"ProfileLevel"])
+            relevant[key] = ((__bridge NSDictionary *)properties)[key];
+        [discoveries addObject:@{@"tiledRequested":tiled, @"status":@(status),
+          @"encoderID":(__bridge NSString *)encoderID ?: (id)NSNull.null, @"properties":relevant}];
+        if (encoderID) CFRelease(encoderID);
+        if (properties) CFRelease(properties);
+      }
+      LumenProbePrintJSON(@{@"mode":@"hevc-tile-capability-discovery", @"listStatus":@(listStatus),
+        @"tileKeyPresent":@(tileKey && *tileKey), @"encoders":encoders, @"discoveries":discoveries});
+      if (list) CFRelease(list);
+      return listStatus == noErr ? 0 : 20;
+    }
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
       LumenProbeOnlineDisplays();
     if (LumenProbeHasFlag(argc, argv, @"--list")) {
