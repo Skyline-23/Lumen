@@ -33,17 +33,7 @@ public final class LumenEncoderReplayProbe: NSObject {
         let presentations = sourcePresentationNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if ProcessInfo.processInfo.environment["LUMEN_HEVC_COMPARE_SLICES"] == "2" {
-                var results: [String] = []
-                for count: Int? in [nil, 2, nil] {
-                    results.append(await runner.run(
-                        fixture: fixture, width: width, height: height, hdr: hdr,
-                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
-                        decoderLoad: true, sliceCount: count
-                    ))
-                }
-                completion("{\"mode\":\"production-hevc-slices-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
-            } else if initialBitrateForUpdate > 0 {
+            if initialBitrateForUpdate > 0 {
                 guard duration >= 8, initialBitrateForUpdate >= bitrate else {
                     completion("{\"error\":\"invalid-rate-update-comparison\"}")
                     return
@@ -227,11 +217,7 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     var decodeInputDrops = 0
     var vclHistogram: [String: Int] = [:]
     var invalidHEVCAccessUnits = 0
-    private let expectedSliceCount: Int?
-
-    init(sliceCount: Int? = nil) {
-        expectedSliceCount = sliceCount ?? ProcessInfo.processInfo.environment["LUMEN_HEVC_SLICE_COUNT"].flatMap(Int.init)
-    }
+    private let expectedSliceCount = ProcessInfo.processInfo.environment["LUMEN_HEVC_SLICE_COUNT"].flatMap(Int.init)
 
     // This class already belongs to the runtime output queue. Read only tiny
     // NAL headers, including for segmented CMBlockBuffers; never copy payloads.
@@ -435,8 +421,8 @@ private actor LumenEncoderReplayRunner {
              metalStaging: Bool? = nil, forwarderRetention: Bool = false,
              initialBitrateForUpdate: Int? = nil,
              presentationPattern: [Int64]? = nil,
-             liveDisplayID: UInt32? = nil, sliceCount: Int? = nil) async -> String {
-        let metrics = LumenEncoderReplayMetrics(sliceCount: sliceCount)
+             liveDisplayID: UInt32? = nil) async -> String {
+        let metrics = LumenEncoderReplayMetrics()
         let forwarder = forwarderRetention ? LumenVideoCaptureForwarder() : nil
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
             .makeStream(bufferingPolicy: .bufferingOldest(4))
@@ -486,17 +472,6 @@ private actor LumenEncoderReplayRunner {
                 try await runtime.start()
             } else {
                 _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
-            }
-            if let sliceCount {
-                try runtime.encoderQueue.sync {
-                    try runtime.setProperty("NumberOfSlices" as CFString, value: sliceCount as CFNumber)
-                    var actual: CFTypeRef?
-                    let status = VTSessionCopyProperty(runtime.compressionSession!, key: "NumberOfSlices" as CFString,
-                                                       allocator: nil, valueOut: &actual)
-                    guard status == noErr, (actual as? NSNumber)?.intValue == sliceCount else {
-                        throw LumenExactCaptureError.invalidFormat("HEVC replay slice readback mismatch: \(status)")
-                    }
-                }
             }
             if metalStaging == true, liveDisplayID == nil {
                 try runtime.prepareSkyLightMetalStaging(
