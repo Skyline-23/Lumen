@@ -1063,7 +1063,7 @@ int main(int argc, const char *argv[]) {
       BOOL benchmark = benchmarkArgument != nil;
       BOOL regionCapabilities = LumenProbeHasFlag(argc,argv,@"--inspect-regular-region-capabilities");
       BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control") || regionCapabilities;
-      BOOL screenSharingUsage = LumenProbeHasFlag(argc,argv,@"--regular-screen-sharing");
+      BOOL cachedMotion = LumenProbeHasFlag(argc,argv,@"--regular-cached-motion");
       BOOL regionPair = LumenProbeHasFlag(argc,argv,@"--inspect-tile-region-pair");
       if (regionPair && (benchmark || regularControl ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) {
@@ -1072,7 +1072,7 @@ int main(int argc, const char *argv[]) {
       if ((benchmark && (!isfinite(benchmarkSeconds) || benchmarkSeconds < 1 || benchmarkSeconds > 30 ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) ||
           (regularControl && !benchmark && !regionCapabilities) ||
-          (screenSharingUsage && !regularControl) ||
+          (cachedMotion && (!regularControl || !benchmark)) ||
           (regionCapabilities && (benchmark || regionPair ||
             !LumenProbeHasFlag(argc,argv,@"--create-tile-session") ||
             LumenProbeHasFlag(argc,argv,@"--encode-tile-samples")))) {
@@ -1145,13 +1145,6 @@ int main(int argc, const char *argv[]) {
           tileSession[@"sessionKind"] = regularControl ? @"regular-control" : @"private-tile";
           if (session) {
             tileSession[@"main10Status"] = @(set(session,kVTCompressionPropertyKey_ProfileLevel,kVTProfileLevel_HEVC_Main10_AutoLevel));
-            if (screenSharingUsage) {
-              // Advertised by the current hardware HEVC backend; its setter
-              // explicitly recognizes ScreenSharing. No private struct ABI.
-              OSStatus usageStatus = set(session,CFSTR("iChatUsageString"),CFSTR("ScreenSharing"));
-              tileSession[@"screenSharingUsageStatus"] = @(usageStatus);
-              if (usageStatus != noErr) tileSession[@"error"] = @"screen-sharing-usage-unsupported";
-            }
             if (regionCapabilities) {
               // Property introspection only. Exported frame-option names are not
               // proof of support; do not send guessed private rectangle payloads.
@@ -1182,6 +1175,31 @@ int main(int argc, const char *argv[]) {
               tileSession[@"regionProperties"] = regionProperties;
               tileSession[@"frameOptionSupportEstablished"] = @NO;
               if (all) CFRelease(all);
+            }
+            if (cachedMotion) {
+              CFTypeRef modeValue = NULL, supportedValue = NULL;
+              OSStatus modeStatus = copy(session,CFSTR("MotionEstimationSearchMode"),NULL,&modeValue);
+              OSStatus supportedStatus = copy(session,CFSTR("SupportedMotionSearchModes"),NULL,&supportedValue);
+              NSArray *modes = supportedValue && CFGetTypeID(supportedValue) == CFArrayGetTypeID() ?
+                (__bridge NSArray *)supportedValue : @[];
+              NSDictionary *baseline = nil, *candidate = nil;
+              for (NSDictionary *mode in modes) {
+                if ([mode[@"MotionEstimationModeID"] isEqual:@0]) baseline = mode;
+                if ([mode[@"MotionEstimationModeID"] isEqual:@2]) candidate = mode;
+              }
+              BOOL equalRange = baseline && candidate &&
+                [baseline[@"MotionEstimationHorizontalSearchRange"] isEqual:candidate[@"MotionEstimationHorizontalSearchRange"]] &&
+                [baseline[@"MotionEstimationVerticalSearchRange"] isEqual:candidate[@"MotionEstimationVerticalSearchRange"]] &&
+                [baseline[@"MotionEstimationCacheMode"] isEqual:@0] && [candidate[@"MotionEstimationCacheMode"] isEqual:@1];
+              BOOL expectedDefault = modeStatus == noErr && modeValue && CFGetTypeID(modeValue) == CFNumberGetTypeID() &&
+                [(__bridge NSNumber *)modeValue isEqual:@0];
+              OSStatus selected = supportedStatus == noErr && expectedDefault && equalRange ?
+                set(session,CFSTR("MotionEstimationSearchMode"),(__bridge CFNumberRef)@2) : kVTPropertyNotSupportedErr;
+              tileSession[@"motionCacheSelection"] = @{@"status":@(selected),@"equalSearchRange":@(equalRange),
+                @"expectedDefault":@(expectedDefault),@"baseline":baseline ?: @{},@"candidate":candidate ?: @{}};
+              if (selected != noErr) tileSession[@"error"] = @"equivalent-motion-cache-unavailable";
+              if (modeValue) CFRelease(modeValue);
+              if (supportedValue) CFRelease(supportedValue);
             }
             NSMutableDictionary *values = [NSMutableDictionary dictionary];
             for (NSString *key in @[@"TileEncoderRequirements", @"CanvasPixelBufferAttributes",
