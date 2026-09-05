@@ -8,6 +8,7 @@
 #import <VideoToolbox/VideoToolbox.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <mach/mach_time.h>
+#import <CommonCrypto/CommonDigest.h>
 
 #import "LumenMacBridge.h"
 
@@ -968,6 +969,56 @@ static CVPixelBufferRef LumenProbeCopyFrame(CVPixelBufferRef source) {
   return copy;
 }
 
+// Audit visible pixels after capture has stopped, never in the measured loop.
+// Stride padding is excluded: it is not content and may be uninitialized.
+static NSDictionary *LumenProbeReplayFixtureAudit(NSArray *frames) {
+  NSMutableArray<NSString *> *hashes = [NSMutableArray array];
+  NSMutableArray<NSNumber *> *changedFractions = [NSMutableArray array];
+  for (NSUInteger index = 0; index < frames.count; index++) {
+    CVPixelBufferRef buffer = (__bridge CVPixelBufferRef)frames[index];
+    CVPixelBufferRef previous = index > 0 ? (__bridge CVPixelBufferRef)frames[index - 1] : NULL;
+    OSType format = CVPixelBufferGetPixelFormatType(buffer);
+    size_t componentBytes = format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ? 2 : 1;
+    if ((format != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange &&
+         format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) ||
+        CVPixelBufferGetPlaneCount(buffer) != 2) return @{@"error":@"fixture-audit-format"};
+    if (CVPixelBufferLockBaseAddress(buffer,kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
+      return @{@"error":@"fixture-audit-lock"};
+    if (previous && CVPixelBufferLockBaseAddress(previous,kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
+      CVPixelBufferUnlockBaseAddress(buffer,kCVPixelBufferLock_ReadOnly);
+      return @{@"error":@"fixture-audit-previous-lock"};
+    }
+    CC_SHA256_CTX digest;
+    CC_SHA256_Init(&digest);
+    uint64_t bytes = 0, changed = 0;
+    for (size_t plane = 0; plane < 2; plane++) {
+      size_t rowBytes = CVPixelBufferGetWidthOfPlane(buffer,plane) * componentBytes * (plane == 0 ? 1 : 2);
+      size_t rows = CVPixelBufferGetHeightOfPlane(buffer,plane);
+      size_t stride = CVPixelBufferGetBytesPerRowOfPlane(buffer,plane);
+      const uint8_t *current = CVPixelBufferGetBaseAddressOfPlane(buffer,plane);
+      const uint8_t *prior = previous ? CVPixelBufferGetBaseAddressOfPlane(previous,plane) : NULL;
+      size_t priorStride = previous ? CVPixelBufferGetBytesPerRowOfPlane(previous,plane) : 0;
+      for (size_t row = 0; row < rows; row++) {
+        CC_SHA256_Update(&digest,current + row * stride,(CC_LONG)rowBytes);
+        bytes += rowBytes;
+        if (prior) for (size_t byte = 0; byte < rowBytes; byte++)
+          changed += current[row * stride + byte] != prior[row * priorStride + byte];
+      }
+    }
+    unsigned char output[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(output,&digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (size_t byte = 0; byte < CC_SHA256_DIGEST_LENGTH; byte++) [hex appendFormat:@"%02x",output[byte]];
+    [hashes addObject:hex];
+    if (previous) [changedFractions addObject:@((double)changed / (double)bytes)];
+    if (previous) CVPixelBufferUnlockBaseAddress(previous,kCVPixelBufferLock_ReadOnly);
+    CVPixelBufferUnlockBaseAddress(buffer,kCVPixelBufferLock_ReadOnly);
+  }
+  return @{@"mode":@"replay-fixture-visible-content-audit", @"frames":@(frames.count),
+           @"uniqueFrames":@([NSSet setWithArray:hashes].count), @"sha256":hashes,
+           @"adjacentChangedByteFractions":changedFractions};
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
@@ -1385,6 +1436,11 @@ int main(int argc, const char *argv[]) {
     if (replayCompare) {
       if (replayFrames.count != 16) {
         LumenProbePrintJSON(@{@"error":@"replay-fixture-incomplete",@"frames":@(replayFrames.count)}); return 15;
+      }
+      NSDictionary *fixtureAudit = LumenProbeReplayFixtureAudit(replayFrames);
+      LumenProbePrintJSON(fixtureAudit);
+      if (fixtureAudit[@"error"] || (stimulus && [fixtureAudit[@"uniqueFrames"] unsignedIntegerValue] < 2)) {
+        LumenProbePrintJSON(@{@"error":@"replay-fixture-content-invalid"}); return 19;
       }
       if (productionReplay) {
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
