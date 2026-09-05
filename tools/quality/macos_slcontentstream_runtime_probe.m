@@ -1148,6 +1148,128 @@ static NSString *LumenProbeValidateRGB10Conversion(CVPixelBufferRef source, CVPi
   return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
 }
 
+// This static patch diagnostic runs only on the harness-owned virtual display.
+// C callbacks sample bounded scalar values while their source buffer is valid;
+// all cross-callback analysis belongs to LumenNativeColorProbe's Swift actor.
+static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue) {
+  NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
+  if (!screen || !LumenProbeOwnedDisplay || LumenProbeOwnedDisplay.displayID != displayID ||
+      CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
+      CGDisplayPixelsWide(displayID) != 3840 || CGDisplayPixelsHigh(displayID) != 2160 ||
+      screen.frame.size.width != 3840 || screen.frame.size.height != 2160) {
+    LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-requires-owned-4k-1x-display"}); return 22;
+  }
+  NSRect frame = NSMakeRect(NSMidX(screen.frame)-512,NSMidY(screen.frame)-256,1024,512);
+  NSPanel *panel = [[NSPanel alloc] initWithContentRect:frame
+    styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel
+    backing:NSBackingStoreBuffered defer:NO screen:screen];
+  panel.opaque=YES; panel.hasShadow=NO; panel.ignoresMouseEvents=YES;
+  panel.level=NSFloatingWindowLevel;
+  panel.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorFullScreenAuxiliary;
+  NSView *view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,1024,512)];
+  view.wantsLayer=YES; view.layer.contentsFormat=kCAContentsFormatRGBA16Float;
+  panel.contentView=view;
+  const CGFloat patches[8][3]={{0,0,0},{.5,.5,.5},{.65,.65,.65},{.75,.75,.75},{.9,.9,.9},
+    {.75,0,0},{0,.75,0},{0,0,.75}};
+  CGColorSpaceRef colorSpace=CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ);
+  if (!colorSpace) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-space"}); return 22; }
+  for (size_t index=0; index<8; index++) {
+    CALayer *patch=[CALayer layer]; patch.frame=CGRectMake(index*128,0,128,512);
+    patch.contentsFormat=kCAContentsFormatRGBA16Float;
+    patch.preferredDynamicRange=CADynamicRangeHigh;
+    patch.toneMapMode=CAToneMapModeNever;
+    CGColorRef color=CGColorCreateWithContentHeadroom(50,colorSpace,patches[index][0],patches[index][1],patches[index][2],1);
+    if (!color) {
+      CGColorSpaceRelease(colorSpace);
+      LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-patch"}); return 22;
+    }
+    patch.backgroundColor=color; CGColorRelease(color); [view.layer addSublayer:patch];
+  }
+  CGColorSpaceRelease(colorSpace);
+  [panel orderFrontRegardless]; [panel displayIfNeeded];
+  LumenProbeRunApplicationForDuration(1);
+  if ([panel.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] != displayID || !NSContainsRect(screen.frame,panel.frame)) {
+    [panel orderOut:nil]; LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-panel-left-owned-display"}); return 22;
+  }
+  LumenNativeColorProbe *probe=[LumenNativeColorProbe new];
+  NSMutableArray<LumenMacSkyLightDisplayStream *> *streams=[NSMutableArray array];
+  // These counters are isolated to the existing serial C callback queue. Main
+  // reads them only after stop and a queue barrier; no new coordination queue.
+  __block NSUInteger sampleCount=0;
+  BOOL started=YES; NSString *startFailure=@"";
+  for (NSUInteger kind=0; kind<2; kind++) {
+    BOOL rgb=kind==0;
+    OSType format=rgb?kCVPixelFormatType_ARGB2101010LEPacked:kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+    LumenMacSkyLightDisplayStreamFrameHandler handler=^(CGDisplayStreamFrameStatus status,uint64_t time,CVPixelBufferRef buffer,CVReturn wrapped) {
+      if (status != kCGDisplayStreamFrameStatusFrameComplete) return;
+      sampleCount++;
+      BOOL valid=wrapped==0 && buffer && CVPixelBufferGetWidth(buffer)==3840 && CVPixelBufferGetHeight(buffer)==2160 &&
+        CVPixelBufferGetPixelFormatType(buffer)==format && CVPixelBufferGetPlaneCount(buffer)==(rgb?0:2);
+      NSMutableArray<NSNumber *> *codes=[NSMutableArray arrayWithCapacity:24];
+      double maximumSpread=0;
+      CVReturn lock=valid?CVPixelBufferLockBaseAddress(buffer,kCVPixelBufferLock_ReadOnly):kCVReturnInvalidArgument;
+      valid=valid && lock==0;
+      if (valid) {
+        uint8_t *base=rgb?CVPixelBufferGetBaseAddress(buffer):CVPixelBufferGetBaseAddressOfPlane(buffer,0);
+        uint8_t *uv=rgb?NULL:CVPixelBufferGetBaseAddressOfPlane(buffer,1);
+        size_t stride=rgb?CVPixelBufferGetBytesPerRow(buffer):CVPixelBufferGetBytesPerRowOfPlane(buffer,0);
+        size_t uvStride=rgb?0:CVPixelBufferGetBytesPerRowOfPlane(buffer,1);
+        valid=base && (rgb || uv);
+        for (size_t patch=0; valid && patch<8; patch++) {
+          double sum[3]={0,0,0},low[3]={1024,1024,1024},high[3]={0,0,0};
+          for (size_t dy=0;dy<4;dy++) for(size_t dx=0;dx<4;dx++) {
+            size_t x=1408+patch*128+62+dx,y=1078+dy;
+            double v[3];
+            if (rgb) {
+              uint32_t packed=((uint32_t *)(base+y*stride))[x];
+              v[0]=(packed>>20)&1023; v[1]=(packed>>10)&1023; v[2]=packed&1023;
+            } else {
+              v[0]=((uint16_t *)(base+y*stride))[x]>>6;
+              uint16_t *chroma=(uint16_t *)(uv+(y/2)*uvStride)+(x/2)*2;
+              v[1]=chroma[0]>>6; v[2]=chroma[1]>>6;
+            }
+            for (size_t c=0;c<3;c++) { sum[c]+=v[c]/16;low[c]=MIN(low[c],v[c]);high[c]=MAX(high[c],v[c]); }
+          }
+          for (size_t c=0;c<3;c++) { [codes addObject:@(sum[c])]; maximumSpread=MAX(maximumSpread,high[c]-low[c]); }
+        }
+      }
+      if (lock==0) CVPixelBufferUnlockBaseAddress(buffer,kCVPixelBufferLock_ReadOnly);
+      NSString *(^tag)(CFStringRef)=^NSString *(CFStringRef key) {
+        id value=buffer?(__bridge id)CVBufferGetAttachment(buffer,key,NULL):nil;
+        return [value isKindOfClass:NSString.class]?value:@"missing";
+      };
+      [probe recordWithRGB:rgb codes:codes spread:maximumSpread valid:valid
+        transfer:tag(kCVImageBufferTransferFunctionKey) primaries:tag(kCVImageBufferColorPrimariesKey) matrix:tag(kCVImageBufferYCbCrMatrixKey)];
+    };
+    LumenMacSkyLightDisplayStream *stream=[[LumenMacSkyLightDisplayStream alloc]
+      initWithDisplayID:displayID outputWidth:3840 outputHeight:2160 pixelFormat:format minimumFrameTime:0
+      queueDepth:2 showCursor:NO yCbCrMatrix:kCVImageBufferYCbCrMatrix_ITU_R_2020 dynamicRangeMode:2
+      colorSpaceName:kCGColorSpaceITUR_2100_PQ callbackQueue:callbackQueue frameHandler:handler];
+    NSError *error=nil;
+    if (!stream || ![stream startWithError:&error]) { started=NO;startFailure=error.localizedDescription?:@"native-color-stream-create";break; }
+    [streams addObject:stream];
+  }
+  if (started) LumenProbeRunApplicationForDuration(3);
+  NSMutableArray *stops=[NSMutableArray array];
+  for (LumenMacSkyLightDisplayStream *stream in streams) [stops addObject:@([stream stop])];
+  dispatch_sync(callbackQueue,^{});
+  [panel orderOut:nil];
+  dispatch_semaphore_t done=dispatch_semaphore_create(0); __block NSString *json;
+  [probe finishWithExpectedSamples:sampleCount completion:^(NSString *value) { json=value;dispatch_semaphore_signal(done); }];
+  if (!LumenProbeWaitPumping(done)) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-collector-timeout"}); return 22; }
+  NSMutableDictionary *result=[[NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] mutableCopy];
+  if (!result) result=[@{@"valid":@NO,@"error":@"native-color-invalid-result"} mutableCopy];
+  BOOL stopOK=stops.count==2;
+  for (NSNumber *stop in stops) stopOK=stopOK && stop.intValue==0;
+  result[@"valid"]=@([result[@"valid"] boolValue] && started && stopOK);
+  result[@"streamStartSuccess"]=@(started);result[@"startFailure"]=startFailure;result[@"stopStatuses"]=stops;
+  result[@"displayID"]=@(displayID);result[@"width"]=@3840;result[@"height"]=@2160;
+  result[@"requestedGrayPQ"]=@[@0,@.5,@.65,@.75,@.9];
+  result[@"screenEDRHeadroom"]=@(screen.maximumExtendedDynamicRangeColorComponentValue);
+  LumenProbePrintJSON(result);
+  return [result[@"valid"] boolValue]?0:22;
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     if (LumenProbeHasFlag(argc,argv,@"--rgb10-p010-smoke")) {
@@ -1563,6 +1685,13 @@ int main(int argc, const char *argv[]) {
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
+    BOOL inspectNativeColor = LumenProbeHasFlag(argc,argv,@"--inspect-native-color");
+    if (inspectNativeColor && (!LumenProbeHasFlag(argc,argv,@"--virtual-display") || !hdr ||
+        outputWidth != 3840 || outputHeight != 2160 || useSCK || replayCompare || stimulus || inspectDamage ||
+        LumenProbeHasFlag(argc,argv,@"--pipeline") || LumenProbeArgument(argc,argv,@"--encoder-mode") ||
+        LumenProbeArgument(argc,argv,@"--pixel-format"))) {
+      LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-requires-exclusive-owned-4k-hdr-raw-source"}); return 22;
+    }
     if (inspectDamage && (!LumenProbeHasFlag(argc,argv,@"--virtual-display") || useSCK || replayCompare ||
         LumenProbeHasFlag(argc,argv,@"--pipeline") || LumenProbeArgument(argc,argv,@"--encoder-mode") || duration > 30)) {
       LumenProbePrintJSON(@{@"error":@"source-damage-requires-owned-raw-private-display-at-most-30-seconds"}); return 13;
@@ -1814,6 +1943,7 @@ int main(int argc, const char *argv[]) {
       "dev.skyline23.lumen.slcontentstream-probe.callback",
       DISPATCH_QUEUE_SERIAL
     );
+    if (inspectNativeColor) return LumenProbeNativeColor(displayID,callbackQueue);
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
     NSString *encoderMode = LumenProbeArgument(argc,argv,@"--encoder-mode");
     if (replayCompare && (encoderMode || pixelFormat == kCVPixelFormatType_32BGRA)) return 13;

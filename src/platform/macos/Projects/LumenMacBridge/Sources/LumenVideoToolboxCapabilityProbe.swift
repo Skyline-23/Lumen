@@ -4,6 +4,116 @@ import Darwin
 import Foundation
 import VideoToolbox
 
+private struct LumenNativeColorObservation: Sendable {
+    let rgb: Bool
+    let codes: [Double]
+    let spread: Double
+    let valid: Bool
+    let transfer: String
+    let primaries: String
+    let matrix: String
+}
+
+/// Only scalar patch samples cross this boundary, never borrowed capture buffers.
+@objc(LumenNativeColorProbe)
+public final class LumenNativeColorProbe: NSObject {
+    private let input: AsyncStream<LumenNativeColorObservation>.Continuation
+    private let task: Task<LumenNativeColorCollector, Never>
+
+    public override init() {
+        let pair = AsyncStream<LumenNativeColorObservation>.makeStream(bufferingPolicy: .bufferingOldest(64))
+        input = pair.continuation
+        task = Task {
+            let collector = LumenNativeColorCollector()
+            for await sample in pair.stream { await collector.record(sample) }
+            return collector
+        }
+        super.init()
+    }
+
+    @objc(recordWithRGB:codes:spread:valid:transfer:primaries:matrix:)
+    public func record(rgb: Bool, codes: [NSNumber], spread: Double, valid: Bool,
+                       transfer: String, primaries: String, matrix: String) {
+        input.yield(.init(rgb: rgb, codes: codes.map(\.doubleValue), spread: spread, valid: valid,
+                         transfer: transfer, primaries: primaries, matrix: matrix))
+    }
+
+    @objc(finishWithExpectedSamples:completion:)
+    public func finish(expectedSamples: Int, completion: @escaping @Sendable (String) -> Void) {
+        input.finish()
+        let task = task
+        Task { completion(await task.value.finish(expectedSamples: expectedSamples)) }
+    }
+}
+
+private actor LumenNativeColorCollector {
+    private var count = 0
+    private var invalid = 0
+    private var rgbCount = 0
+    private var p010Count = 0
+    private var rgb: LumenNativeColorObservation?
+    private var p010: LumenNativeColorObservation?
+    private var maximumSpread = 0.0
+    private var maximumTemporalDelta = 0.0
+
+    func record(_ sample: LumenNativeColorObservation) {
+        count += 1
+        guard sample.valid, sample.codes.count == 24, sample.spread.isFinite,
+              sample.codes.allSatisfy({ $0.isFinite && (0 ... 1023).contains($0) }) else {
+            invalid += 1; return
+        }
+        maximumSpread = max(maximumSpread, sample.spread)
+        if let previous = sample.rgb ? rgb : p010 {
+            maximumTemporalDelta = max(maximumTemporalDelta,
+                zip(previous.codes, sample.codes).map { abs($0 - $1) }.max() ?? 0)
+        }
+        if sample.rgb { rgbCount += 1; rgb = sample } else { p010Count += 1; p010 = sample }
+    }
+
+    func finish(expectedSamples: Int) -> String {
+        var result: [String: Any] = ["mode": "native-rgb10-p010-static-color", "productionAcceptance": false,
+            "samples": count, "expectedSamples": expectedSamples, "invalidSamples": invalid,
+            "rgbSamples": rgbCount, "p010Samples": p010Count,
+            "maximumPatchSpreadCodes": maximumSpread, "maximumTemporalDeltaCodes": maximumTemporalDelta,
+            "valid": false]
+        if let rgb, let p010 {
+            var predicted: [Double] = []
+            var nits: [Double] = []
+            for index in 0 ..< 8 {
+                let r = rgb.codes[index * 3] / 1023, g = rgb.codes[index * 3 + 1] / 1023
+                let b = rgb.codes[index * 3 + 2] / 1023
+                let y = 0.2627 * r + 0.6780 * g + 0.0593 * b
+                predicted += [64 + 876 * y, 512 + 896 * (b - y) / (2 * (1 - 0.0593)),
+                              512 + 896 * (r - y) / (2 * (1 - 0.2627))]
+                if index < 5 {
+                    let p = pow(y, 1 / (2523.0 / 32))
+                    nits.append(10000 * pow(max(p - 3424.0 / 4096, 0) / (2413.0 / 128 - 2392.0 / 128 * p), 1 / (2610.0 / 16384)))
+                }
+            }
+            let maximumError = zip(predicted, p010.codes).map { abs($0 - $1) }.max() ?? 1024
+            let tagsValid = rgb.transfer == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String &&
+                p010.transfer == rgb.transfer && rgb.primaries == kCVImageBufferColorPrimaries_ITU_R_2020 as String &&
+                p010.primaries == rgb.primaries && p010.matrix == kCVImageBufferYCbCrMatrix_ITU_R_2020 as String
+            let grayscaleOrdered = (1 ..< 5).allSatisfy { nits[$0] > nits[$0 - 1] + 5 }
+            result["rgbPatchCodes"] = rgb.codes
+            result["nativeP010PatchCodes"] = p010.codes
+            result["predictedP010PatchCodes"] = predicted
+            result["maximumMatrixErrorCodes"] = maximumError
+            result["grayNitsAssumingPQ"] = nits
+            result["distinctGrayLevelsAboveSDR"] = grayscaleOrdered && nits[3] > 203 && nits[4] > nits[3] + 50
+            result["tagsValid"] = tagsValid
+            result["rgbTransfer"] = rgb.transfer; result["rgbPrimaries"] = rgb.primaries
+            result["p010Transfer"] = p010.transfer; result["p010Matrix"] = p010.matrix
+            result["valid"] = count == expectedSamples && invalid == 0 && maximumSpread <= 2 &&
+                maximumTemporalDelta <= 2 && maximumError <= 4 && tagsValid && grayscaleOrdered &&
+                nits[3] > 203 && nits[4] > nits[3] + 50
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "{\"valid\":false,\"error\":\"native-color-json\"}" }
+        return json
+    }
+}
+
 @objc(LumenRGB10ConversionProbe)
 public final class LumenRGB10ConversionProbe: NSObject {
     @objc(runWithSource:changedSource:inspect:completion:)
