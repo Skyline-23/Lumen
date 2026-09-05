@@ -24,6 +24,9 @@
 @property(nonatomic) uint64_t wrapFailureCount;
 @property(nonatomic) uint64_t firstCallbackNanos;
 @property(nonatomic) uint64_t lastCallbackNanos;
+@property(nonatomic) uint64_t futureDisplayTimeCount;
+@property(nonatomic) uint64_t firstCallbackMachTime;
+@property(nonatomic) uint64_t lastCallbackMachTime;
 @property(nonatomic) size_t surfaceWidth;
 @property(nonatomic) size_t surfaceHeight;
 @property(nonatomic) OSType surfacePixelFormat;
@@ -1196,6 +1199,7 @@ int main(int argc, const char *argv[]) {
                               CVPixelBufferRef pixelBuffer,
                               CVReturn pixelBufferStatus) {
       uint64_t callbackNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+      uint64_t callbackMachTime = mach_absolute_time();
       BOOL signalFirstFrame = NO;
       @synchronized (state) {
         state.callbackCount += 1;
@@ -1211,6 +1215,9 @@ int main(int argc, const char *argv[]) {
               signalFirstFrame = YES;
             }
             state.lastCallbackNanos = callbackNanos;
+            if (state.firstCallbackMachTime == 0) state.firstCallbackMachTime = callbackMachTime;
+            state.lastCallbackMachTime = callbackMachTime;
+            if (displayTime > callbackMachTime) state.futureDisplayTimeCount += 1;
             state.surfaceWidth = CVPixelBufferGetWidth(pixelBuffer);
             state.surfaceHeight = CVPixelBufferGetHeight(pixelBuffer);
             state.surfacePixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
@@ -1427,9 +1434,13 @@ int main(int argc, const char *argv[]) {
     }
 
     NSMutableArray<NSNumber *> *displayDeltas = [NSMutableArray array];
+    NSUInteger repeatedDisplayTimes = 0;
+    NSUInteger reversedDisplayTimes = 0;
     for (NSUInteger index = 1; index < displayTimes.count; index += 1) {
       uint64_t previous = displayTimes[index - 1].unsignedLongLongValue;
       uint64_t current = displayTimes[index].unsignedLongLongValue;
+      if (current == previous) repeatedDisplayTimes += 1;
+      if (current < previous) reversedDisplayTimes += 1;
       if (current > previous) {
         [displayDeltas addObject:@(
           LumenProbeMachTicksToMilliseconds(current - previous)
@@ -1447,6 +1458,18 @@ int main(int argc, const char *argv[]) {
       : 0;
 
     NSMutableDictionary<NSString *, id> *result = [@{
+      @"firstDisplayMachTime": displayTimes.firstObject ?: @0,
+      @"lastDisplayMachTime": displayTimes.lastObject ?: @0,
+      @"firstCallbackMachTime": @(state.firstCallbackMachTime),
+      @"lastCallbackMachTime": @(state.lastCallbackMachTime),
+      @"futureDisplayTimeCount": @(state.futureDisplayTimeCount),
+      @"repeatedDisplayTimeCount": @(repeatedDisplayTimes),
+      @"reversedDisplayTimeCount": @(reversedDisplayTimes),
+      @"displayTimeSpanMilliseconds": @(displayTimes.count > 1 &&
+        displayTimes.lastObject.unsignedLongLongValue >= displayTimes.firstObject.unsignedLongLongValue
+        ? LumenProbeMachTicksToMilliseconds(displayTimes.lastObject.unsignedLongLongValue -
+            displayTimes.firstObject.unsignedLongLongValue) : 0),
+      @"callbackTimeSpanMilliseconds": @(callbackDurationSeconds * 1000),
       @"backend": useSCK ? @"screencapturekit" : stream.backendName,
       @"encoderComparison": encoderMetrics,
       @"contentStreamClass": stream.contentStreamClassName ?: @"unavailable",
