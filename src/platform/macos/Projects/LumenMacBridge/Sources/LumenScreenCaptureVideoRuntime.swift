@@ -72,6 +72,9 @@ final class LumenScreenCaptureVideoRuntime:
     var skyLightMetalStageCommandBufferFailureCount: UInt64 = 0
     var skyLightMetalStageValidationFailureCount: UInt64 = 0
     var skyLightMetalStageTiming = LumenCaptureStageTimingAccumulator()
+    var skyLightMetalGPUExecutionTiming = LumenCaptureStageTimingAccumulator()
+    var skyLightMetalGPUCallbackTiming = LumenCaptureStageTimingAccumulator()
+    var skyLightMetalCompletionQueueTiming = LumenCaptureStageTimingAccumulator()
     var skyLightMetalStageLastError: String?
     // Lifecycle transitions are fenced on `queue` because capture start and
     // stop can suspend while either backend still owns callback delivery.

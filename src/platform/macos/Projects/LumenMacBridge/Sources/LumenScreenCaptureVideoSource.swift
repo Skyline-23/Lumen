@@ -517,13 +517,19 @@ extension LumenScreenCaptureVideoRuntime {
             destinationChromaTexture: destinationChromaTexture
         )
         commandBuffer.addCompletedHandler { [self, copyContext] buffer in
+            let rawCallbackMachTime = mach_absolute_time()
+            let gpuStartTime = buffer.gpuStartTime
+            let gpuEndTime = buffer.gpuEndTime
             let status = buffer.status
             let errorDescription = buffer.error?.localizedDescription
             self.queue.async { [self, copyContext] in
                 self.completeSkyLightMetalStaging(
                     copyContext,
                     status: status,
-                    errorDescription: errorDescription
+                    errorDescription: errorDescription,
+                    rawCallbackMachTime: rawCallbackMachTime,
+                    gpuStartTime: gpuStartTime,
+                    gpuEndTime: gpuEndTime
                 )
             }
         }
@@ -534,7 +540,10 @@ extension LumenScreenCaptureVideoRuntime {
     func completeSkyLightMetalStaging(
         _ copyContext: LumenSkyLightMetalCopyContext,
         status: MTLCommandBufferStatus,
-        errorDescription: String?
+        errorDescription: String?,
+        rawCallbackMachTime: UInt64,
+        gpuStartTime: Double,
+        gpuEndTime: Double
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
 
@@ -553,6 +562,20 @@ extension LumenScreenCaptureVideoRuntime {
         }
         _ = skyLightMetalStagingAdmission.completeCopy()
         skyLightMetalStageCompletionCount &+= 1
+        skyLightMetalCompletionQueueTiming.observe(LumenMachTime.milliseconds(
+            from: rawCallbackMachTime, to: mach_absolute_time()
+        ))
+        if gpuStartTime > 0, gpuEndTime >= gpuStartTime {
+            skyLightMetalGPUExecutionTiming.observe((gpuEndTime - gpuStartTime) * 1_000)
+            // Metal timestamps are host seconds, i.e. the same mach-absolute
+            // clock converted here. Do not turn unavailable timestamps into0.
+            let callbackSeconds = LumenMachTime.relativeTime(
+                from: 0, to: rawCallbackMachTime
+            ).seconds
+            if callbackSeconds >= gpuEndTime {
+                skyLightMetalGPUCallbackTiming.observe((callbackSeconds - gpuEndTime) * 1_000)
+            }
+        }
         skyLightMetalStageTiming.observe(
             LumenMachTime.milliseconds(
                 from: copyContext.startedMachTime,

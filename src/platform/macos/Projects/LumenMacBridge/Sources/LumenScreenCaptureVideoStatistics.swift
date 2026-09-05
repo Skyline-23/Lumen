@@ -148,6 +148,18 @@ extension LumenScreenCaptureVideoRuntime {
                 timing: skyLightMetalStageTiming
             )
             + lumenCaptureTimingNotes(
+                prefix: "metalGPUExecution",
+                timing: skyLightMetalGPUExecutionTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "metalGPUToCallback",
+                timing: skyLightMetalGPUCallbackTiming
+            )
+            + lumenCaptureTimingNotes(
+                prefix: "metalCompletionOwnerQueue",
+                timing: skyLightMetalCompletionQueueTiming
+            )
+            + lumenCaptureTimingNotes(
                 prefix: "videoToolboxEncodeToCallback",
                 timing: videoToolboxCallbackTiming
             )
