@@ -582,6 +582,7 @@ static int LumenProbeRunProductionPipeline(
   size_t outputHeight,
   int32_t targetBitrateKbps,
   double duration,
+  double periodicSeconds,
   BOOL hdr,
   BOOL stimulus,
   NSArray<NSDictionary<NSString *, id> *> *onlineDisplays
@@ -687,8 +688,20 @@ static int LumenProbeRunProductionPipeline(
   uint64_t measurementStartNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
   uint64_t measurementDeadline = measurementStartNanos +
     (uint64_t)(duration * (double)NSEC_PER_SEC);
+  uint64_t nextPeriodicRequest = periodicSeconds > 0
+    ? measurementStartNanos + (uint64_t)(periodicSeconds * NSEC_PER_SEC)
+    : UINT64_MAX;
+  uint64_t periodicRequests = 0;
+  uint64_t periodicRequestFailures = 0;
   while (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < measurementDeadline) {
     LumenProbeDrainForwardedFrames(controller, counters, YES);
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    if (now >= nextPeriodicRequest) {
+      periodicRequests += 1;
+      if (!LumenMacBridgeRequestPeriodicCaptureKeyFrame()) periodicRequestFailures += 1;
+      // Do not burst overdue refresh requests after a scheduling stall.
+      nextPeriodicRequest = now + (uint64_t)(periodicSeconds * NSEC_PER_SEC);
+    }
     if (stimulusWindow != nil) {
       LumenProbeRunApplicationForDuration(.001);
     } else {
@@ -728,6 +741,9 @@ static int LumenProbeRunProductionPipeline(
 
   NSMutableDictionary<NSString *, id> *result = [@{
     @"mode": @"production-pipeline",
+    @"requestedPeriodicSeconds": @(periodicSeconds),
+    @"periodicRequestCount": @(periodicRequests),
+    @"periodicRequestFailureCount": @(periodicRequestFailures),
     @"displayID": @(displayID),
     @"requestedWidth": @(outputWidth),
     @"requestedHeight": @(outputHeight),
@@ -1061,6 +1077,12 @@ int main(int argc, const char *argv[]) {
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
+    NSString *pipelinePeriodicArgument = LumenProbeArgument(argc,argv,@"--pipeline-periodic-seconds");
+    double pipelinePeriodicSeconds = pipelinePeriodicArgument.doubleValue;
+    if (pipelinePeriodicArgument && (!LumenProbeHasFlag(argc,argv,@"--pipeline") ||
+        !isfinite(pipelinePeriodicSeconds) || pipelinePeriodicSeconds < 1 || pipelinePeriodicSeconds > 60)) {
+      LumenProbePrintJSON(@{@"error":@"pipeline-periodic-seconds-requires-pipeline-and-range-one-to-60"}); return 13;
+    }
     BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
     NSString *sourceArrivalPath = LumenProbeArgument(argc,argv,@"--source-arrival-file");
     NSString *sourcePresentationPath = LumenProbeArgument(argc,argv,@"--source-presentation-file");
@@ -1309,6 +1331,7 @@ int main(int argc, const char *argv[]) {
         outputHeight,
         targetBitrateKbps,
         duration,
+        pipelinePeriodicSeconds,
         hdr,
         stimulus,
         onlineDisplays
