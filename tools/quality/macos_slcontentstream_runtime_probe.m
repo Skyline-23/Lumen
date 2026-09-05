@@ -15,12 +15,6 @@
 #include <time.h>
 #include <unistd.h>
 
-@interface LumenEncoderReplayProbe : NSObject
-+ (void)runWithFrames:(NSArray *)frames width:(NSInteger)width height:(NSInteger)height
-  hdr:(BOOL)hdr bitrate:(NSInteger)bitrate duration:(double)duration
-  completion:(void (^)(NSString *))completion;
-@end
-
 @interface LumenContentStreamProbeState : NSObject
 @property(nonatomic) uint64_t callbackCount;
 @property(nonatomic) uint64_t completeCount;
