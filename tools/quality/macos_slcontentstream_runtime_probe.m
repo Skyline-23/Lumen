@@ -1295,7 +1295,8 @@ int main(int argc, const char *argv[]) {
         NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[output dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
         if (result[@"comparisons"]) {
           for (NSDictionary *row in result[@"comparisons"])
-            if (row[@"error"] || ![row[@"hdrValid"] boolValue] || [row[@"processingFailures"] intValue] != 0) return 18;
+            if (row[@"error"] || ![row[@"hdrValid"] boolValue] ||
+                ![row[@"decoderValid"] boolValue] || [row[@"processingFailures"] intValue] != 0) return 18;
           return 0;
         }
         return result && !result[@"error"] && [result[@"hdrValid"] boolValue] &&

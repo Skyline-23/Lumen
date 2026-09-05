@@ -304,6 +304,12 @@ private actor LumenEncoderReplayRunner {
                     "overlapEnabled": overlapEnabled,
                     "decoderLoad": decoderLoad, "decoder": decodeResult,
                     "decodeInputDrops": metrics.decodeInputDrops,
+                    "decoderValid": !decoderLoad || (
+                        metrics.decodeInputDrops == 0 && decodeResult["hardware"] == 1 &&
+                        decodeResult["failures"] == 0 && decodeResult["invalidOutputs"] == 0 &&
+                        decodeResult["submitted"] == metrics.latencies.count &&
+                        decodeResult["decoded"] == metrics.latencies.count
+                    ),
                     "outputFPS": Double(metrics.latencies.count) / seconds,
                     "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
