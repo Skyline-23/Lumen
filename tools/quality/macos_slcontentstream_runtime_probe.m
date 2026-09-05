@@ -17,6 +17,48 @@
 #include <time.h>
 #include <unistd.h>
 
+// Observe the existing raw-source adapter without changing its production
+// callback contract. The SDK declares this update ABI; no VT option is sent.
+@interface LumenMacSkyLightDisplayStream (LumenProbeDamageObservation)
+- (void)handleDisplayStreamStatus:(CGDisplayStreamFrameStatus)status
+                     displayTime:(uint64_t)displayTime surface:(IOSurfaceRef)surface
+                          update:(CGDisplayStreamUpdateRef)update dropCountOverride:(size_t)dropCount;
+@end
+
+@interface LumenProbeDamageDisplayStream : LumenMacSkyLightDisplayStream
+@property(nonatomic, strong) LumenDisplayDamageProbe *damageProbe;
+@end
+
+@implementation LumenProbeDamageDisplayStream
+- (void)handleDisplayStreamStatus:(CGDisplayStreamFrameStatus)status
+                     displayTime:(uint64_t)displayTime surface:(IOSurfaceRef)surface
+                          update:(CGDisplayStreamUpdateRef)update dropCountOverride:(size_t)dropCount {
+  if (status == kCGDisplayStreamFrameStatusFrameComplete) {
+    typedef const CGRect *(*GetRects)(CGDisplayStreamUpdateRef, CGDisplayStreamUpdateRectType, size_t *);
+    GetRects getRects = (GetRects)dlsym(RTLD_DEFAULT,"CGDisplayStreamUpdateGetRects");
+    size_t count = 0;
+    const CGRect *rects = update && getRects ? getRects(update,kCGDisplayStreamUpdateDirtyRects,&count) : NULL;
+    size_t width = surface ? IOSurfaceGetWidth(surface) : 0;
+    size_t height = surface ? IOSurfaceGetHeight(surface) : 0;
+    BOOL available = update && getRects;
+    BOOL valid = available && width > 0 && height > 0 && count <= 4096 && (count == 0 || rects);
+    double area = 0;
+    for (size_t index=0; valid && index<count; index++) {
+      CGRect r = rects[index];
+      valid = isfinite(r.origin.x) && isfinite(r.origin.y) && isfinite(r.size.width) && isfinite(r.size.height) &&
+        r.origin.x >= 0 && r.origin.y >= 0 && r.size.width >= 0 && r.size.height >= 0 &&
+        CGRectGetMaxX(r) <= width && CGRectGetMaxY(r) <= height;
+      if (valid) area += r.size.width*r.size.height;
+    }
+    // Sum may overcount overlaps; label and clamp it as an upper bound, not an exact union.
+    double coverage = valid ? MIN(1.0,area/((double)width*height)) : 0;
+    [self.damageProbe recordWithWidth:width height:height rectCount:count coverageUpperBound:coverage
+      available:available valid:valid];
+  }
+  [super handleDisplayStreamStatus:status displayTime:displayTime surface:surface update:update dropCountOverride:dropCount];
+}
+@end
+
 @interface LumenContentStreamProbeState : NSObject
 @property(nonatomic) uint64_t callbackCount;
 @property(nonatomic) uint64_t completeCount;
@@ -1438,6 +1480,11 @@ int main(int argc, const char *argv[]) {
     }
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
+    if (inspectDamage && (!LumenProbeHasFlag(argc,argv,@"--virtual-display") || useSCK || replayCompare ||
+        LumenProbeHasFlag(argc,argv,@"--pipeline") || LumenProbeArgument(argc,argv,@"--encoder-mode") || duration > 30)) {
+      LumenProbePrintJSON(@{@"error":@"source-damage-requires-owned-raw-private-display-at-most-30-seconds"}); return 13;
+    }
     if (sourcePresentationPath && !sourceArrivalPath) {
       LumenProbePrintJSON(@{@"error":@"presentation-file-requires-paired-arrival-file"}); return 13;
     }
@@ -1757,10 +1804,13 @@ int main(int argc, const char *argv[]) {
       if (status == kCGDisplayStreamFrameStatusFrameComplete && pixelBufferStatus == kCVReturnSuccess && pixelBuffer)
         [encoder accept:pixelBuffer displayTime:displayTime];
     };
-    LumenMacSkyLightDisplayStream *stream = useSCK ? nil : [[LumenMacSkyLightDisplayStream alloc]
+    LumenDisplayDamageProbe *damageProbe = inspectDamage ? [LumenDisplayDamageProbe new] : nil;
+    Class streamClass = inspectDamage ? LumenProbeDamageDisplayStream.class : LumenMacSkyLightDisplayStream.class;
+    LumenMacSkyLightDisplayStream *stream = useSCK ? nil : [[streamClass alloc]
       initWithDisplayID:displayID outputWidth:outputWidth outputHeight:outputHeight pixelFormat:pixelFormat
       minimumFrameTime:0 queueDepth:2 showCursor:YES yCbCrMatrix:matrix dynamicRangeMode:hdr ? 2 : 0
       colorSpaceName:colorSpace callbackQueue:callbackQueue frameHandler:handler];
+    if (inspectDamage) ((LumenProbeDamageDisplayStream *)stream).damageProbe = damageProbe;
     LumenProbeSCKSource *sck = useSCK ? [LumenProbeSCKSource new] : nil;
     sck.handler = handler;
     if (!useSCK && stream == nil) {
@@ -2034,11 +2084,24 @@ int main(int argc, const char *argv[]) {
       @"onlineDisplays": onlineDisplays
     } mutableCopy];
     [result addEntriesFromDictionary:stimulusMetrics];
+    BOOL damagePassed = YES;
+    if (damageProbe) {
+      dispatch_semaphore_t done = dispatch_semaphore_create(0);
+      __block NSString *json;
+      [damageProbe finishWithCompletion:^(NSString *value) { json=value; dispatch_semaphore_signal(done); }];
+      if (dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC)) == 0) {
+        NSDictionary *damage = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+        result[@"sourceDamage"] = damage ?: @{};
+        damagePassed = [damage[@"samples"] unsignedLongLongValue] == completeCount &&
+          [damage[@"usable"] unsignedLongLongValue] == completeCount && completeCount > 0;
+      } else { result[@"sourceDamage"] = @{@"error":@"collector-timeout"}; damagePassed = NO; }
+      result[@"sourceDamageValid"] = @(damagePassed);
+    }
     LumenProbePrintJSON(result);
     BOOL encoderPassed = !encoder || ([encoderMetrics[@"encoderErrors"] unsignedIntegerValue] == 0 &&
       [encoderMetrics[@"encoderHDRTransferValid"] boolValue] &&
       [encoderMetrics[@"freshHardwareDecodeStatus"] intValue] == 0 &&
       [encoderMetrics[@"freshHardwareDecodedFrames"] intValue] == 3);
-    return firstFrameWait == 0 && wrapFailureCount == 0 && encoderPassed ? 0 : 5;
+    return firstFrameWait == 0 && wrapFailureCount == 0 && encoderPassed && damagePassed ? 0 : 5;
   }
 }

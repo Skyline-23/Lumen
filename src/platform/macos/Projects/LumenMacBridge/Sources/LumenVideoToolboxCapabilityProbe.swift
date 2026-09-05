@@ -4,6 +4,85 @@ import Darwin
 import Foundation
 import VideoToolbox
 
+private struct LumenDisplayDamageObservation: Sendable {
+    let width: Int
+    let height: Int
+    let rectCount: Int
+    let coverageUpperBound: Double
+    let available: Bool
+    let valid: Bool
+}
+
+/// Diagnostic-only bounded bridge. Missing stream entries fail the final count
+/// gate rather than silently biasing a damage-coverage measurement.
+@objc(LumenDisplayDamageProbe)
+public final class LumenDisplayDamageProbe: NSObject {
+    private let input: AsyncStream<LumenDisplayDamageObservation>.Continuation
+    private let task: Task<String, Never>
+
+    public override init() {
+        let pair = AsyncStream<LumenDisplayDamageObservation>.makeStream(bufferingPolicy: .bufferingOldest(32))
+        input = pair.continuation
+        task = Task {
+            let collector = LumenDisplayDamageCollector()
+            for await observation in pair.stream { await collector.record(observation) }
+            return await collector.finish()
+        }
+        super.init()
+    }
+
+    @objc(recordWithWidth:height:rectCount:coverageUpperBound:available:valid:)
+    public func record(width: Int, height: Int, rectCount: Int, coverageUpperBound: Double,
+                       available: Bool, valid: Bool) {
+        input.yield(.init(width: width, height: height, rectCount: rectCount,
+                          coverageUpperBound: coverageUpperBound, available: available, valid: valid))
+    }
+
+    @objc(finishWithCompletion:)
+    public func finish(completion: @escaping @Sendable (String) -> Void) {
+        input.finish()
+        let result = task
+        Task { completion(await result.value) }
+    }
+}
+
+private actor LumenDisplayDamageCollector {
+    private var samples = 0
+    private var unavailable = 0
+    private var invalid = 0
+    private var usable = 0
+    private var totalCoverage = 0.0
+    private var bins = [Int](repeating: 0, count: 7)
+    private var examples: [[String: Double]] = []
+
+    func record(_ sample: LumenDisplayDamageObservation) {
+        samples += 1
+        guard sample.available else { unavailable += 1; return }
+        guard sample.valid, sample.width > 0, sample.height > 0,
+              sample.coverageUpperBound.isFinite, (0 ... 1).contains(sample.coverageUpperBound) else {
+            invalid += 1; return
+        }
+        usable += 1
+        totalCoverage += sample.coverageUpperBound
+        let limits = [0.0, 0.05, 0.10, 0.25, 0.50, 0.99, 1.0]
+        if let bin = limits.firstIndex(where: { sample.coverageUpperBound <= $0 }) { bins[bin] += 1 }
+        if examples.count < 4 {
+            examples.append(["width": Double(sample.width), "height": Double(sample.height),
+                             "rectCount": Double(sample.rectCount), "coverageUpperBound": sample.coverageUpperBound])
+        }
+    }
+
+    func finish() -> String {
+        let result: [String: Any] = ["samples": samples, "unavailable": unavailable, "invalid": invalid,
+            "usable": usable, "meanCoverageUpperBound": usable > 0 ? totalCoverage / Double(usable) : 0,
+            "coverageBinUpperLimits": [0, 0.05, 0.10, 0.25, 0.50, 0.99, 1],
+            "coverageBins": bins, "examples": examples, "productionAcceptance": false]
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "{\"error\":\"damage-serialization\"}" }
+        return json
+    }
+}
+
 /// Entry point used only by the existing isolated screen-measurement tool.
 /// The fixture is immutable; orchestration is actor-isolated and encoding uses
 /// the product runtime, including its two-slot/latest-pending admission policy.
