@@ -274,7 +274,8 @@ public final class LumenTileOutputProbe: NSObject {
     @objc(finishWithCompletion:)
     public func finish(completion: @escaping @Sendable (String) -> Void) {
         continuation.finish()
-        Task { completion(await result.value) }
+        let pending = result
+        Task { completion(await pending.value) }
     }
 }
 
