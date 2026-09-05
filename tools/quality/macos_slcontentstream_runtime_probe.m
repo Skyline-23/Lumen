@@ -288,7 +288,7 @@ static BOOL LumenProbeWaitPumping(dispatch_semaphore_t semaphore) {
   configuration.width = width; configuration.height = height;
   configuration.pixelFormat = hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
   configuration.colorSpaceName = hdr ? kCGColorSpaceITUR_2100_PQ : kCGColorSpaceITUR_709;
-  configuration.colorMatrix = hdr ? kCGDisplayStreamYCbCrMatrix_ITU_R_2020 : kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
+  configuration.colorMatrix = hdr ? kCVImageBufferYCbCrMatrix_ITU_R_2020 : kCVImageBufferYCbCrMatrix_ITU_R_709_2;
   configuration.minimumFrameInterval = CMTimeMake(1,120); configuration.queueDepth = 2;
   configuration.showsCursor = YES; configuration.capturesAudio = NO;
   configuration.scalesToFit = YES; configuration.preservesAspectRatio = YES;
