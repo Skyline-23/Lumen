@@ -1063,6 +1063,7 @@ int main(int argc, const char *argv[]) {
       BOOL benchmark = benchmarkArgument != nil;
       BOOL regionCapabilities = LumenProbeHasFlag(argc,argv,@"--inspect-regular-region-capabilities");
       BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control") || regionCapabilities;
+      BOOL screenSharingUsage = LumenProbeHasFlag(argc,argv,@"--regular-screen-sharing");
       BOOL regionPair = LumenProbeHasFlag(argc,argv,@"--inspect-tile-region-pair");
       if (regionPair && (benchmark || regularControl ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) {
@@ -1071,6 +1072,7 @@ int main(int argc, const char *argv[]) {
       if ((benchmark && (!isfinite(benchmarkSeconds) || benchmarkSeconds < 1 || benchmarkSeconds > 30 ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) ||
           (regularControl && !benchmark && !regionCapabilities) ||
+          (screenSharingUsage && !regularControl) ||
           (regionCapabilities && (benchmark || regionPair ||
             !LumenProbeHasFlag(argc,argv,@"--create-tile-session") ||
             LumenProbeHasFlag(argc,argv,@"--encode-tile-samples")))) {
@@ -1143,6 +1145,13 @@ int main(int argc, const char *argv[]) {
           tileSession[@"sessionKind"] = regularControl ? @"regular-control" : @"private-tile";
           if (session) {
             tileSession[@"main10Status"] = @(set(session,kVTCompressionPropertyKey_ProfileLevel,kVTProfileLevel_HEVC_Main10_AutoLevel));
+            if (screenSharingUsage) {
+              // Advertised by the current hardware HEVC backend; its setter
+              // explicitly recognizes ScreenSharing. No private struct ABI.
+              OSStatus usageStatus = set(session,CFSTR("iChatUsageString"),CFSTR("ScreenSharing"));
+              tileSession[@"screenSharingUsageStatus"] = @(usageStatus);
+              if (usageStatus != noErr) tileSession[@"error"] = @"screen-sharing-usage-unsupported";
+            }
             if (regionCapabilities) {
               // Property introspection only. Exported frame-option names are not
               // proof of support; do not send guessed private rectangle payloads.
@@ -1229,7 +1238,22 @@ int main(int argc, const char *argv[]) {
               tileSession[@"prepareStatus"] = regularControl ? @(VTCompressionSessionPrepareToEncodeFrames((VTCompressionSessionRef)session)) :
                 (prepare ? @(prepare(session, NULL, NULL)) : @(-12900));
             }
-            if (encodeTiles && [tileSession[@"prepareStatus"] intValue] == 0) {
+            if (regularControl) {
+              NSMutableDictionary *effective = [NSMutableDictionary dictionary];
+              for (NSString *key in @[@"iChatUsageString",@"EncoderUsage",@"MotionEstimationSearchMode",
+                  @"VideoResolutionAdaptation",@"ProfileLevel",@"AverageBitRate",@"DataRateLimits",
+                  @"ExpectedFrameRate",@"RealTime",@"AllowFrameReordering",@"Quality"])
+              {
+                CFTypeRef value = NULL;
+                OSStatus copied = copy(session,(__bridge CFStringRef)key,NULL,&value);
+                id object = (__bridge id)value;
+                if (object && ![NSJSONSerialization isValidJSONObject:@[object]]) object = [object description];
+                effective[key] = @{@"status":@(copied),@"value":object ?: NSNull.null};
+                if (value) CFRelease(value);
+              }
+              tileSession[@"effectiveRegularProperties"] = effective;
+            }
+            if (encodeTiles && [tileSession[@"prepareStatus"] intValue] == 0 && !tileSession[@"error"]) {
               typedef OSStatus (*TileEncode)(CFTypeRef, CVPixelBufferRef, LumenProbeTilePoint,
                 LumenProbeTileSize, CFDictionaryRef, void *, VTEncodeInfoFlags *);
               typedef OSStatus (*TileComplete)(CFTypeRef);
