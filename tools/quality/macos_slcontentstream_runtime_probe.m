@@ -1062,6 +1062,11 @@ int main(int argc, const char *argv[]) {
       double benchmarkSeconds = benchmarkArgument.doubleValue;
       BOOL benchmark = benchmarkArgument != nil;
       BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control");
+      BOOL regionPair = LumenProbeHasFlag(argc,argv,@"--inspect-tile-region-pair");
+      if (regionPair && (benchmark || regularControl ||
+          !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) {
+        LumenProbePrintJSON(@{@"error":@"tile-region-inspection-requires-private-smoke"}); return 20;
+      }
       if ((benchmark && (!isfinite(benchmarkSeconds) || benchmarkSeconds < 1 || benchmarkSeconds > 30 ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) ||
           (regularControl && !benchmark)) {
@@ -1196,6 +1201,7 @@ int main(int argc, const char *argv[]) {
               TileEncode encode = (TileEncode)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionEncodeTile");
               TileComplete complete = (TileComplete)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionCompleteTiles");
               NSMutableArray *submissions = [NSMutableArray array];
+              NSMutableArray *submissionDetails = [NSMutableArray array];
               NSMutableArray *fixture = [NSMutableArray array];
               if (encode && complete) for (int frame=0; frame<(benchmark ? 16 : 3); frame++) {
                 CVPixelBufferRef buffer = NULL;
@@ -1218,10 +1224,20 @@ int main(int argc, const char *argv[]) {
                 CVBufferSetAttachment(buffer,kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,kCVAttachmentMode_ShouldPropagate);
                 CVBufferSetAttachment(buffer,kCVImageBufferYCbCrMatrixKey,kCVImageBufferYCbCrMatrix_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
                 if (benchmark) { [fixture addObject:CFBridgingRelease(buffer)]; continue; }
-                VTEncodeInfoFlags flags = 0;
-                OSStatus encoded = encode(session,buffer,(LumenProbeTilePoint){0,0},
-                  (LumenProbeTileSize){3840,2160},NULL,(void *)(uintptr_t)(frame+1),&flags);
-                [submissions addObject:@(encoded)];
+                OSStatus encoded = noErr;
+                for (int part=0; part<(regionPair ? 2 : 1); part++) {
+                  VTEncodeInfoFlags flags = 0;
+                  int index = regionPair ? frame*2+part : frame;
+                  LumenProbeTilePoint origin = {regionPair ? part*1920 : 0,0};
+                  LumenProbeTileSize size = {regionPair ? 1920 : 3840,2160};
+                  uint64_t begin = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+                  encoded = encode(session,buffer,origin,size,NULL,(void *)(uintptr_t)(index+1),&flags);
+                  [submissions addObject:@(encoded)];
+                  [submissionDetails addObject:@{@"frame":@(frame),@"part":@(part),@"sourceIndex":@(index),
+                    @"origin":@[@(origin.x),@(origin.y)],@"size":@[@(size.width),@(size.height)],
+                    @"beganNanos":@(begin),@"returnedNanos":@(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)),@"status":@(encoded)}];
+                  if (encoded != noErr) break;
+                }
                 // Drain each smoke input before releasing it. Not a benchmark.
                 tileSession[@"completeStatus"] = @(complete(session));
                 CFRelease(buffer);
@@ -1229,6 +1245,8 @@ int main(int argc, const char *argv[]) {
               }
               else tileSession[@"error"] = @"tile-encode-symbol-unavailable";
               tileSession[@"submissionStatuses"] = submissions;
+              tileSession[@"submissionDetails"] = submissionDetails;
+              tileSession[@"regionInspectionOnly"] = @(regionPair);
               if (benchmark && fixture.count == 16 && !tileSession[@"error"]) {
                 tileSession[@"fixtureAudit"] = LumenProbeReplayFixtureAudit(fixture);
                 dispatch_semaphore_t done = dispatch_semaphore_create(0);

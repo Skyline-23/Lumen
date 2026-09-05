@@ -473,6 +473,8 @@ private actor LumenTileOutputCollector {
                 parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil,
                 parameterSetCountOut: nil, nalUnitHeaderLengthOut: &headerLength)
             var nalTypes: [Int] = []
+            var vclFirstSliceFlags: [Bool] = []
+            var vclPrefixes: [String] = []
             var parsed = headerStatus == noErr && [1, 2, 4].contains(headerLength)
             var offset = 0
             let size = CMBlockBufferGetDataLength(block)
@@ -489,7 +491,26 @@ private actor LumenTileOutputCollector {
                     parsed = false; break
                 }
                 nalTypes.append(Int((header[0] >> 1) & 63))
+                if (header[0] >> 1) & 63 <= 31, length >= 3 {
+                    var prefix = [UInt8](repeating: 0, count: min(length, 48))
+                    if CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: prefix.count, destination: &prefix) == noErr {
+                        vclFirstSliceFlags.append(prefix[2] & 0x80 != 0)
+                        if rows.count < 6 { vclPrefixes.append(Data(prefix).base64EncodedString()) }
+                    } else { parsed = false }
+                }
                 offset += length
+            }
+            if output.x != 0 || output.y != 0 || output.width != 3840 || output.height != 2160 {
+                // Region capability inspection only. Do not relabel a cropped
+                // stream as full 4K or send an unknown fragment to the decoder.
+                rows.append(["status": output.status, "flags": output.flags, "bytes": size,
+                    "origin": [output.x, output.y], "tileSize": [output.width, output.height],
+                    "formatSize": [dimensions.width, dimensions.height], "sourceIndex": output.sourceIndex,
+                    "callbackNanos": output.callbackNanos, "nalTypes": nalTypes,
+                    "vclFirstSliceFlags": vclFirstSliceFlags, "vclPrefixBase64": vclPrefixes,
+                    "parameterSets": parameterSets, "nalValid": parsed && offset == size,
+                    "regionInspectionOnly": true])
+                valid = false; completed(output, false); continue
             }
             let transfer = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction)
             let pq = (transfer as? String) == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String)
