@@ -1568,6 +1568,7 @@ int main(int argc, const char *argv[]) {
           for (NSDictionary *row in result[@"comparisons"])
             if (row[@"error"] || ![row[@"hdrValid"] boolValue] ||
                 ![row[@"decoderValid"] boolValue] ||
+                ![row[@"hevcSlicesValid"] boolValue] ||
                 (row[@"rawSourceValid"] && ![row[@"rawSourceValid"] boolValue]) ||
                 (row[@"metalValid"] && ![row[@"metalValid"] boolValue]) ||
                 (row[@"forwarderValid"] && ![row[@"forwarderValid"] boolValue]) ||
@@ -1576,6 +1577,7 @@ int main(int argc, const char *argv[]) {
           return 0;
         }
         return result && !result[@"error"] && [result[@"hdrValid"] boolValue] &&
+          [result[@"hevcSlicesValid"] boolValue] &&
           [result[@"processingFailures"] intValue] == 0 ? 0 : 18;
       }
       NSMutableArray *comparisons = [NSMutableArray array];

@@ -215,6 +215,60 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     var hdrValid = true
     var keyFrames = 0
     var decodeInputDrops = 0
+    var vclHistogram: [String: Int] = [:]
+    var invalidHEVCAccessUnits = 0
+    private let expectedSliceCount = ProcessInfo.processInfo.environment["LUMEN_HEVC_SLICE_COUNT"].flatMap(Int.init)
+
+    // This class already belongs to the runtime output queue. Read only tiny
+    // NAL headers, including for segmented CMBlockBuffers; never copy payloads.
+    private func recordHEVCSlices(_ sample: CMSampleBuffer) {
+        guard CMSampleBufferGetNumSamples(sample) == 1,
+              let format = CMSampleBufferGetFormatDescription(sample),
+              CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_HEVC,
+              let block = CMSampleBufferGetDataBuffer(sample) else {
+            invalidHEVCAccessUnits += 1
+            return
+        }
+        var headerLength: Int32 = 0
+        guard CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+            format, parameterSetIndex: 0, parameterSetPointerOut: nil,
+            parameterSetSizeOut: nil, parameterSetCountOut: nil,
+            nalUnitHeaderLengthOut: &headerLength
+        ) == noErr, [1, 2, 4].contains(headerLength) else {
+            invalidHEVCAccessUnits += 1
+            return
+        }
+        let total = CMBlockBufferGetDataLength(block)
+        let prefixBytes = Int(headerLength)
+        var offset = 0
+        var vclCount = 0
+        var firstSlices = 0
+        var header = [UInt8](repeating: 0, count: 4)
+        while offset < total {
+            guard total - offset >= prefixBytes,
+                  CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: prefixBytes,
+                                            destination: &header) == noErr else { break }
+            let length = header.prefix(prefixBytes).reduce(0) { ($0 << 8) | Int($1) }
+            offset += prefixBytes
+            guard length >= 2, length <= total - offset,
+                  CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: min(length, 3),
+                                            destination: &header) == noErr,
+                  header[0] & 0x80 == 0, header[1] & 0x07 != 0 else { break }
+            let type = (header[0] >> 1) & 0x3f
+            if type <= 31 {
+                guard length >= 3 else { break }
+                vclCount += 1
+                if header[2] & 0x80 != 0 { firstSlices += 1 }
+            }
+            offset += length
+        }
+        guard offset == total, vclCount > 0, firstSlices == 1,
+              expectedSliceCount == nil || expectedSliceCount == vclCount else {
+            invalidHEVCAccessUnits += 1
+            return
+        }
+        vclHistogram[String(vclCount), default: 0] += 1
+    }
 
     func record(_ frame: LumenEncodedFrame, requiresHDR: Bool) {
         if let latency = frame.outputCallbackLatencyMilliseconds {
@@ -225,6 +279,7 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
             from: frame.sourceDisplayTime, to: mach_absolute_time()
         ))
         bytes += CMSampleBufferGetTotalSampleSize(frame.sampleBuffer)
+        recordHEVCSlices(frame.sampleBuffer)
         if frame.isKeyFrame { keyFrames += 1 }
         if requiresHDR {
             let report = frame.hdrValidationReport
@@ -430,7 +485,8 @@ private actor LumenEncoderReplayRunner {
                             "PreemptiveLoadBalancing", "MaximizePowerEfficiency", "InputQueueMaxCount",
                             "EncoderUsage", "LookAheadFrames", "SVENum", "SVESchedMode",
                             "MaxFrameDelayCount", "RealTime", "MaximumRealTimeFrameRate",
-                            "AverageBitRate", "DataRateLimits"] {
+                            "AverageBitRate", "DataRateLimits", "NumberOfSlices",
+                            "RecommendedParallelizationLimit"] {
                     var value: CFTypeRef?
                     let status = VTSessionCopyProperty(session, key: key as CFString,
                                                        allocator: nil, valueOut: &value)
@@ -613,6 +669,11 @@ private actor LumenEncoderReplayRunner {
                     ),
                     "outputFPS": Double(metrics.latencies.count) / seconds,
                     "outputFrames": metrics.latencies.count,
+                    "hevcVCLUnitsPerFrame": metrics.vclHistogram,
+                    "invalidHEVCAccessUnits": metrics.invalidHEVCAccessUnits,
+                    "hevcSlicesValid": metrics.invalidHEVCAccessUnits == 0 &&
+                        metrics.vclHistogram.values.reduce(0, +) == metrics.latencies.count &&
+                        !metrics.latencies.isEmpty,
                     "offeredFrames": liveDisplayID != nil ? Int(runtime.statistics.sourceFrameCount) : offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
                     "callbackP50Milliseconds": percentile(metrics.latencies, 0.5),
