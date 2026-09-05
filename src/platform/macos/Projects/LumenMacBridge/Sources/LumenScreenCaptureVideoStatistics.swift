@@ -269,6 +269,9 @@ extension LumenScreenCaptureVideoRuntime {
         let sourceService = compactTiming(sourceCallbackServiceTiming)
         let admissionWait = compactTiming(encoderAdmissionWaitTiming)
         let metalStage = compactTiming(skyLightMetalStageTiming)
+        let metalGPU = compactTiming(skyLightMetalGPUExecutionTiming)
+        let metalCallback = compactTiming(skyLightMetalGPUCallbackTiming)
+        let metalOwnerQueue = compactTiming(skyLightMetalCompletionQueueTiming)
         let encodeCall = compactTiming(encoderInvocationTiming)
         let encodeCallback = compactTiming(videoToolboxCallbackTiming)
         let outputQueueWait = compactTiming(outputOwnerQueueWaitTiming)
@@ -283,7 +286,7 @@ extension LumenScreenCaptureVideoRuntime {
             "stage=occupancy source-gap-ms=\(sourceGap, privacy: .public) display-gap-ms=\(displayGap, privacy: .public) display-lead-ms=\(displayLead, privacy: .public) output-gap-ms=\(outputGap, privacy: .public) single-flight-outputs=\(self.outputOccupancyTimings.singleFlightOutputs, privacy: .public)/\(self.outputOccupancyTimings.outputs, privacy: .public) cadence-drops=\(self.statistics.intentionalFrameCadenceDropCount, privacy: .public) target-fps=\(cadenceTarget, privacy: .public)"
         )
         Self.pipelineLogger.notice(
-            "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) metal-stage-ms=\(metalStage, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
+            "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) metal-stage-ms=\(metalStage, privacy: .public) metal-gpu-ms=\(metalGPU, privacy: .public) metal-callback-ms=\(metalCallback, privacy: .public) metal-owner-queue-ms=\(metalOwnerQueue, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
         )
     }
 
