@@ -1070,7 +1070,8 @@ int main(int argc, const char *argv[]) {
     BOOL compareForwarder = LumenProbeHasFlag(argc,argv,@"--compare-forwarder");
     NSString *initialBitrateArgument = LumenProbeArgument(argc,argv,@"--compare-initial-bitrate-kbps");
     int initialBitrateForUpdate = initialBitrateArgument.intValue;
-    BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
+    BOOL compareCombinedLoad = LumenProbeHasFlag(argc,argv,@"--compare-combined-load");
+    BOOL compareRawSourceLoad = compareCombinedLoad || LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *fixtureWarmupArgument = LumenProbeArgument(argc,argv,@"--fixture-warmup-seconds");
     double fixtureWarmupSeconds = fixtureWarmupArgument.doubleValue;
@@ -1489,9 +1490,9 @@ int main(int argc, const char *argv[]) {
               colorSpaceName:colorSpace callbackQueue:callbackQueue frameHandler:handler];
             NSError *error = nil;
             BOOL success = loadStream != nil && [loadStream startWithError:&error];
-            return @{@"success":@(success), @"message":error.localizedDescription ?: @""};
+            return @{@"success":@(success), @"message":error.localizedDescription ?: @"", @"combinedLoad":@(compareCombinedLoad)};
           }
-          if (loadStream == nil) return @{@"success":@YES, @"completeFrames":@0};
+          if (loadStream == nil) return @{@"success":@YES, @"completeFrames":@0, @"combinedLoad":@(compareCombinedLoad)};
           int32_t status = [loadStream stop];
           loadStream = nil;
           __block uint64_t count = 0;

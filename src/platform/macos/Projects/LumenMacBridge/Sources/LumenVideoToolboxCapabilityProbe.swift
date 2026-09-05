@@ -124,7 +124,10 @@ public final class LumenEncoderReplayProbe: NSObject {
                     }
                     let result = await runner.run(
                         fixture: fixture, width: width, height: height, hdr: hdr,
-                        bitrate: bitrate, duration: duration, periodicSeconds: 1
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        decoderLoad: enabled && start["combinedLoad"] as? Bool == true,
+                        metalStaging: start["combinedLoad"] as? Bool == true ? enabled : nil,
+                        forwarderRetention: enabled && start["combinedLoad"] as? Bool == true
                     )
                     let sourceResult = sourceLoadController(false)
                     guard var row = (try? JSONSerialization.jsonObject(
@@ -134,6 +137,7 @@ public final class LumenEncoderReplayProbe: NSObject {
                         return
                     }
                     row["rawSourceLoad"] = enabled
+                    row["combinedLoadComparison"] = start["combinedLoad"] as? Bool == true
                     row["rawSourceMetrics"] = sourceResult
                     row["rawSourceValid"] = sourceResult["success"] as? Bool == true
                         && (!enabled || (sourceResult["completeFrames"] as? Int ?? 0) > 0)
