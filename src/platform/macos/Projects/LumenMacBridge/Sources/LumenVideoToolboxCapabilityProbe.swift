@@ -287,10 +287,45 @@ public final class LumenTileOutputProbe: NSObject {
 }
 
 private actor LumenTileOutputCollector {
+    private let mastering = LumenVideoHDRDisplayMetadata.hdr10Default().encodedData
+    private let contentLight = LumenVideoContentLightLevelInfo.hdr10Default().encodedData
+
+    private func hdrSEIPrefix(headerLength: Int32) -> Data? {
+        guard mastering.count == 24, contentLight.count == 4, [1, 2, 4].contains(headerLength) else { return nil }
+        // CoreMedia defines these 24/4-byte values as the ISO HEVC SEI payloads.
+        // Carry the exact configured bytes; do not infer new display luminance.
+        var rbsp = Data([137, 24]); rbsp.append(mastering)
+        rbsp.append(contentsOf: [144, 4]); rbsp.append(contentLight); rbsp.append(0x80)
+        var nal = Data([39 << 1, 1])
+        var zeroes = 0
+        for byte in rbsp {
+            if zeroes >= 2 && byte <= 3 { nal.append(3); zeroes = 0 }
+            nal.append(byte)
+            zeroes = byte == 0 ? zeroes + 1 : 0
+        }
+        guard nal.count < (UInt64(1) << (UInt64(headerLength) * 8)) else { return nil }
+        // Independently unescape the generated payload before it enters the
+        // sample. Header validation also rejects malformed length prefixes.
+        var restored = Data(); zeroes = 0
+        for byte in nal.dropFirst(2) {
+            if zeroes == 2 && byte == 3 { zeroes = 0; continue }
+            restored.append(byte); zeroes = byte == 0 ? zeroes + 1 : 0
+        }
+        guard restored == rbsp else { return nil }
+        var result = Data()
+        for shift in stride(from: (Int(headerLength) - 1) * 8, through: 0, by: -8) {
+            result.append(UInt8(truncatingIfNeeded: nal.count >> shift))
+        }
+        result.append(nal)
+        return result
+    }
+
     func run(_ input: AsyncStream<LumenTileProbeSample>) async -> String {
         var rows: [[String: Any]] = []
         let (compressed, continuation) = AsyncStream<LumenReplayCompressedSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
         var valid = true
+        var hdrPrefixes = 0
+        var staticMetadataValid = true
         for await output in input {
             guard let sample = output.sample, output.status == noErr, output.flags & 2 == 0,
                   let format = sample.formatDescription, let block = sample.dataBuffer else {
@@ -345,7 +380,10 @@ private actor LumenTileOutputCollector {
             let rebuildStatus = parameterPointers.count == 3 ? CMVideoFormatDescriptionCreateFromHEVCParameterSets(
                 allocator: nil, parameterSetCount: parameterPointers.count,
                 parameterSetPointers: parameterPointers, parameterSetSizes: parameterSizes,
-                nalUnitHeaderLength: headerLength, extensions: nil, formatDescriptionOut: &rebuilt
+                nalUnitHeaderLength: headerLength, extensions: [
+                    kCMFormatDescriptionExtension_MasteringDisplayColorVolume: mastering,
+                    kCMFormatDescriptionExtension_ContentLightLevelInfo: contentLight
+                ] as CFDictionary, formatDescriptionOut: &rebuilt
             ) : kCMFormatDescriptionError_InvalidParameter
             let rebuiltPQ = rebuilt.map {
                 (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String) ==
@@ -353,13 +391,41 @@ private actor LumenTileOutputCollector {
             } ?? false
             var normalized: CMSampleBuffer?
             var normalizeStatus: OSStatus = -1
+            var transportBlock = block
+            var prefixBytes = 0
+            let isIRAP = nalTypes.contains { (16 ... 23).contains($0) }
+            if isIRAP {
+                if let prefix = hdrSEIPrefix(headerLength: headerLength) {
+                    var prefixed: CMBlockBuffer?
+                    var status = CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil,
+                        blockLength: prefix.count, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+                        offsetToData: 0, dataLength: prefix.count, flags: 0, blockBufferOut: &prefixed)
+                    if status == noErr, let prefixed {
+                        status = prefix.withUnsafeBytes { bytes in
+                            CMBlockBufferReplaceDataBytes(with: bytes.baseAddress!, blockBuffer: prefixed,
+                                offsetIntoDestination: 0, dataLength: prefix.count)
+                        }
+                        if status == noErr {
+                            status = CMBlockBufferAppendBufferReference(prefixed, targetBBuf: block,
+                                offsetToData: 0, dataLength: size, flags: 0)
+                        }
+                        if status == noErr { transportBlock = prefixed; prefixBytes = prefix.count; hdrPrefixes += 1 }
+                    }
+                    staticMetadataValid = staticMetadataValid && status == noErr
+                } else { staticMetadataValid = false }
+            }
+            let formatMetadataValid = rebuilt.map {
+                (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_MasteringDisplayColorVolume) as? Data) == mastering &&
+                (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_ContentLightLevelInfo) as? Data) == contentLight
+            } ?? false
+            staticMetadataValid = staticMetadataValid && formatMetadataValid
             if let rebuilt, (0 ... 2).contains(output.sourceIndex) {
                 // These three synthetic inputs have explicit 120 Hz source
                 // times. Restore the submitted index, never callback order.
                 var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 120),
                     presentationTimeStamp: CMTime(value: Int64(output.sourceIndex), timescale: 120), decodeTimeStamp: .invalid)
-                var sampleSize = size
-                normalizeStatus = CMSampleBufferCreateReady(allocator: nil, dataBuffer: block,
+                var sampleSize = CMBlockBufferGetDataLength(transportBlock)
+                normalizeStatus = CMSampleBufferCreateReady(allocator: nil, dataBuffer: transportBlock,
                     formatDescription: rebuilt, sampleCount: 1, sampleTimingEntryCount: 1,
                     sampleTimingArray: &timing, sampleSizeEntryCount: 1,
                     sampleSizeArray: &sampleSize, sampleBufferOut: &normalized)
@@ -374,6 +440,7 @@ private actor LumenTileOutputCollector {
                 "parameterSets": parameterSets,
                 "sourceIndex": output.sourceIndex, "rebuildStatus": rebuildStatus,
                 "rebuiltPQ": rebuiltPQ, "normalizeStatus": normalizeStatus,
+                "hdrPrefixBytes": prefixBytes, "staticHDRInFormat": formatMetadataValid,
                 "formatExtensionKeys": (CMFormatDescriptionGetExtensions(format) as? [String: Any])?.keys.sorted() ?? [],
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
                 "durationValid": sample.duration.isValid])
@@ -383,10 +450,13 @@ private actor LumenTileOutputCollector {
         }
         continuation.finish()
         let decoded = await LumenReplayDecoderLoad().run(compressed,
-            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true, acknowledge: {})
+            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true,
+            requiresStaticHDR: true, acknowledge: {})
         valid = valid && rows.count == 3 && decoded["hardware"] == 1 && decoded["decoded"] == 3 &&
             decoded["submitted"] == 3 && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
-        let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid,
+        let metadataEquivalent = staticMetadataValid && hdrPrefixes == 1 && valid
+        let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid && metadataEquivalent,
+            "hdrMetadataEquivalent": metadataEquivalent, "hdrPrefixCount": hdrPrefixes,
             "outputs": rows, "decoder": decoded]
         return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)) ?? Data(), as: UTF8.self)
     }
@@ -401,10 +471,14 @@ private final class LumenReplayDecodeCallback: Sendable {
     let output: AsyncStream<Bool>.Continuation
     let pixelFormat: OSType
     let requiresHDR4K: Bool
-    init(output: AsyncStream<Bool>.Continuation, pixelFormat: OSType, requiresHDR4K: Bool) {
+    let requiresStaticHDR: Bool
+    let mastering = LumenVideoHDRDisplayMetadata.hdr10Default().encodedData
+    let contentLight = LumenVideoContentLightLevelInfo.hdr10Default().encodedData
+    init(output: AsyncStream<Bool>.Continuation, pixelFormat: OSType, requiresHDR4K: Bool, requiresStaticHDR: Bool) {
         self.output = output
         self.pixelFormat = pixelFormat
         self.requiresHDR4K = requiresHDR4K
+        self.requiresStaticHDR = requiresStaticHDR
     }
 }
 
@@ -415,9 +489,11 @@ private actor LumenReplayDecoderLoad {
     func run(_ input: AsyncStream<LumenReplayCompressedSample>,
              pixelFormat: OSType,
              requiresHDR4K: Bool = false,
+             requiresStaticHDR: Bool = false,
              acknowledge: @escaping @Sendable () -> Void) async -> [String: Int] {
         let (outputs, continuation) = AsyncStream<Bool>.makeStream()
-        let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat, requiresHDR4K: requiresHDR4K)
+        let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat,
+            requiresHDR4K: requiresHDR4K, requiresStaticHDR: requiresStaticHDR)
         let collector = Task {
             var decoded = 0
             var invalid = 0
@@ -453,6 +529,9 @@ private actor LumenReplayDecoderLoad {
                                     (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String) &&
                                 (CVBufferCopyAttachment($0, kCVImageBufferColorPrimariesKey, nil) as? String) ==
                                     (kCVImageBufferColorPrimaries_ITU_R_2020 as String)
+                            )) && (!context.requiresStaticHDR || (
+                                (CVBufferCopyAttachment($0, kCVImageBufferMasteringDisplayColorVolumeKey, nil) as? Data) == context.mastering &&
+                                (CVBufferCopyAttachment($0, kCVImageBufferContentLightLevelInfoKey, nil) as? Data) == context.contentLight
                             ))
                         } == true
                         context.output.yield(valid)

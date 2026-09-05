@@ -1219,7 +1219,11 @@ int main(int argc, const char *argv[]) {
       if (LumenProbeHasFlag(argc, argv, @"--encode-tile-samples")) {
         NSMutableArray *unsupported = [NSMutableArray array];
         NSDictionary *statuses = tileSession[@"encodePropertyStatuses"];
-        for (NSString *key in statuses) if ([statuses[key] intValue] != noErr) [unsupported addObject:key];
+        for (NSString *key in statuses) if ([statuses[key] intValue] != noErr) {
+          BOOL replacedHDRInsertion = [key isEqualToString:(__bridge NSString *)kVTCompressionPropertyKey_HDRMetadataInsertionMode] &&
+            [tileSession[@"output"][@"hdrMetadataEquivalent"] boolValue];
+          if (!replacedHDRInsertion) [unsupported addObject:key];
+        }
         [unsupported sortUsingSelector:@selector(compare:)];
         tileSession[@"unsupportedRequiredProperties"] = unsupported;
         BOOL fullContract = statuses.count > 0 && unsupported.count == 0 &&
