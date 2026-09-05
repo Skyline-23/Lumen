@@ -1185,12 +1185,19 @@ static NSString *LumenProbeValidateRGB10Conversion(CVPixelBufferRef source, CVPi
 // This static patch diagnostic runs only on the harness-owned virtual display.
 // C callbacks sample bounded scalar values while their source buffer is valid;
 // all cross-callback analysis belongs to LumenNativeColorProbe's Swift actor.
+static BOOL LumenProbeBackingSizeMatches(CGDirectDisplayID displayID,size_t width,size_t height) {
+  CGDisplayModeRef mode=CGDisplayCopyDisplayMode(displayID);
+  BOOL matches=mode && CGDisplayModeGetPixelWidth(mode)==width && CGDisplayModeGetPixelHeight(mode)==height;
+  if(mode) CGDisplayModeRelease(mode);
+  return matches;
+}
+
 static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue, NSString *requestedMatrix) {
   NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
   CGFloat scale=screen.frame.size.width>0?3840/screen.frame.size.width:0;
   if (!screen || !LumenProbeOwnedDisplay || LumenProbeOwnedDisplay.displayID != displayID ||
       CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
-      CGDisplayPixelsWide(displayID) != 3840 || CGDisplayPixelsHigh(displayID) != 2160 ||
+      !LumenProbeBackingSizeMatches(displayID,3840,2160) ||
       (scale != 1 && scale != 2) || screen.frame.size.height*scale != 2160) {
     LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-requires-owned-4k-matched-scale-display"}); return 22;
   }
@@ -1324,6 +1331,7 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   result[@"virtualDisplayBackend"]=LumenProbeOwnedDisplay.usesSkyLightBackend?@"sl":@"cg";
   result[@"logicalWidth"]=@(screen.frame.size.width);result[@"logicalHeight"]=@(screen.frame.size.height);
   result[@"backingScale"]=@(scale);result[@"patchBackingSize"]=NSStringFromSize(backing);
+  result[@"legacyDisplayWidth"]=@(CGDisplayPixelsWide(displayID));result[@"legacyDisplayHeight"]=@(CGDisplayPixelsHigh(displayID));
   LumenProbePrintJSON(result);
   return [result[@"valid"] boolValue]?0:22;
 }
@@ -1887,7 +1895,7 @@ int main(int argc, const char *argv[]) {
       displayID = LumenProbeOwnedDisplay.displayID;
       LumenProbeRunApplicationForDuration(.5);
       if (CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
-          CGDisplayPixelsWide(displayID) != outputWidth || CGDisplayPixelsHigh(displayID) != outputHeight) {
+          !LumenProbeBackingSizeMatches(displayID,outputWidth,outputHeight)) {
         LumenProbePrintJSON(@{@"error":@"isolated-display-contract-failed"}); return 11;
       }
       onlineDisplays = LumenProbeOnlineDisplays();
