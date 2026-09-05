@@ -785,6 +785,7 @@ static int LumenProbeRunProductionPipeline(
   [result addEntriesFromDictionary:stimulusMetrics];
   LumenProbePrintJSON(result);
   return acknowledged &&
+      periodicRequestFailures == 0 &&
       counters.bootstrapAcknowledgementFailureCount == 0 &&
       counters.captureFailureCount == 0
     ? 0
