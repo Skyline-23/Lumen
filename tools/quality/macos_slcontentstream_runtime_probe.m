@@ -1013,10 +1013,21 @@ int main(int argc, const char *argv[]) {
     BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
     BOOL compareMetalStaging = LumenProbeHasFlag(argc,argv,@"--compare-metal-staging");
     BOOL compareForwarder = LumenProbeHasFlag(argc,argv,@"--compare-forwarder");
+    NSString *initialBitrateArgument = LumenProbeArgument(argc,argv,@"--compare-initial-bitrate-kbps");
+    int initialBitrateForUpdate = initialBitrateArgument.intValue;
     BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (initialBitrateArgument && (!productionReplay || duration < 8 || targetBitrateKbps <= 0 ||
+        initialBitrateForUpdate < targetBitrateKbps || compareForwarder || compareMetalStaging ||
+        compareSourceJitter || compareRawSourceLoad ||
+        LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-source-cadence") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
+      LumenProbePrintJSON(@{@"error":@"rate-update-requires-exclusive-production-replay"}); return 13;
+    }
     if (compareForwarder && (!productionReplay || compareMetalStaging || compareSourceJitter || compareRawSourceLoad ||
         LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
         LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
@@ -1382,6 +1393,7 @@ int main(int argc, const char *argv[]) {
           compareSourceCadence:LumenProbeHasFlag(argc,argv,@"--compare-source-cadence")
           compareMetalStaging:compareMetalStaging
           compareForwarder:compareForwarder
+          initialBitrateForUpdate:initialBitrateForUpdate
           sourceArrivalNanos:compareSourceJitter ? [state.arrivalTimes copy] : nil
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
@@ -1403,6 +1415,7 @@ int main(int argc, const char *argv[]) {
                 (row[@"rawSourceValid"] && ![row[@"rawSourceValid"] boolValue]) ||
                 (row[@"metalValid"] && ![row[@"metalValid"] boolValue]) ||
                 (row[@"forwarderValid"] && ![row[@"forwarderValid"] boolValue]) ||
+                (row[@"rateUpdateValid"] && ![row[@"rateUpdateValid"] boolValue]) ||
                 [row[@"processingFailures"] intValue] != 0) return 18;
           return 0;
         }

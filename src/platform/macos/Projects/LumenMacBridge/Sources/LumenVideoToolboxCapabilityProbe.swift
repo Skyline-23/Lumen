@@ -9,13 +9,14 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:compareForwarder:sourceArrivalNanos:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:compareForwarder:initialBitrateForUpdate:sourceArrivalNanos:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
         compareSourceCadence: Bool,
         compareMetalStaging: Bool,
         compareForwarder: Bool,
+        initialBitrateForUpdate: Int,
         sourceArrivalNanos: [NSNumber]?,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
@@ -30,7 +31,21 @@ public final class LumenEncoderReplayProbe: NSObject {
         let arrivals = sourceArrivalNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if compareForwarder {
+            if initialBitrateForUpdate > 0 {
+                guard duration >= 8, initialBitrateForUpdate >= bitrate else {
+                    completion("{\"error\":\"invalid-rate-update-comparison\"}")
+                    return
+                }
+                var results: [String] = []
+                for initial in [bitrate, initialBitrateForUpdate, bitrate] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        initialBitrateForUpdate: initial
+                    ))
+                }
+                completion("{\"mode\":\"production-rate-update-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if compareForwarder {
                 var results: [String] = []
                 for enabled in [false, true, false] {
                     results.append(await runner.run(
@@ -162,6 +177,7 @@ private struct LumenEncoderReplayFixture: @unchecked Sendable {
 // VideoToolbox callback ordering must remain intact at this C boundary.
 private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     var latencies: [Double] = []
+    var outputUptimeNanos: [UInt64] = []
     var frameAges: [Double] = []
     var bytes = 0
     var hdrValid = true
@@ -171,6 +187,7 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     func record(_ frame: LumenEncodedFrame, requiresHDR: Bool) {
         if let latency = frame.outputCallbackLatencyMilliseconds {
             latencies.append(latency)
+            outputUptimeNanos.append(DispatchTime.now().uptimeNanoseconds)
         }
         frameAges.append(LumenMachTime.milliseconds(
             from: frame.sourceDisplayTime, to: mach_absolute_time()
@@ -305,7 +322,8 @@ private actor LumenEncoderReplayRunner {
              overlapEnabled: Bool = true, decoderLoad: Bool = false,
              sourceFrameRate: Int = 120, arrivalPattern: [Int64]? = nil,
              arrivalPeriod: Int64 = 0, arrivalKind: String = "constant",
-             metalStaging: Bool? = nil, forwarderRetention: Bool = false) async -> String {
+             metalStaging: Bool? = nil, forwarderRetention: Bool = false,
+             initialBitrateForUpdate: Int? = nil) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let forwarder = forwarderRetention ? LumenVideoCaptureForwarder() : nil
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
@@ -321,7 +339,7 @@ private actor LumenEncoderReplayRunner {
                 videoProfile: hdr ? .hevcMain10 : .hevcMain,
                 chromaSubsampling: .yuv420, bitDepth: hdr ? 10 : 8,
                 dynamicRange: hdr ? .hdr10 : .sdr,
-                targetFrameRate: 120, targetVideoBitRateKbps: bitrate,
+                targetFrameRate: 120, targetVideoBitRateKbps: initialBitrateForUpdate ?? bitrate,
                 requestedWidth: width, requestedHeight: height,
                 sinkRequest: .init(
                     capability: .init(gamut: hdr ? .rec2020 : .srgb,
@@ -367,20 +385,22 @@ private actor LumenEncoderReplayRunner {
                     try runtime.outputOwnership.markCaptureStarted(streamIdentity: 1)
                 }
             }
-            let encoderProperties: [String: Any] = runtime.encoderQueue.sync {
+            let readEncoderProperties = { runtime.encoderQueue.sync { () -> [String: Any] in
                 guard let session = runtime.compressionSession else { return [:] }
                 var values: [String: Any] = [:]
                 for key in ["ThroughputMode", "SupportedThroughputModes", "ConcurrentMode",
                             "PreemptiveLoadBalancing", "MaximizePowerEfficiency", "InputQueueMaxCount",
                             "EncoderUsage", "LookAheadFrames", "SVENum", "SVESchedMode",
-                            "MaxFrameDelayCount", "RealTime", "MaximumRealTimeFrameRate"] {
+                            "MaxFrameDelayCount", "RealTime", "MaximumRealTimeFrameRate",
+                            "AverageBitRate", "DataRateLimits"] {
                     var value: CFTypeRef?
                     let status = VTSessionCopyProperty(session, key: key as CFString,
                                                        allocator: nil, valueOut: &value)
                     values[key] = ["status": status, "value": value ?? NSNull()]
                 }
                 return values
-            }
+            } }
+            let encoderProperties = readEncoderProperties()
             runtime.queue.sync {
                 runtime.encoderOverlapEnabled = overlapEnabled
                 runtime.statistics.isRunning = true
@@ -394,6 +414,11 @@ private actor LumenEncoderReplayRunner {
             }
             let clock = ContinuousClock()
             let start = clock.now
+            let startUptimeNanos = DispatchTime.now().uptimeNanoseconds
+            var didApplyRateUpdate = false
+            var rateUpdateSucceeded = initialBitrateForUpdate == nil
+            var rateUpdateCompletedNanos: UInt64 = 0
+            var propertiesAfterRateUpdate: [String: Any] = [:]
             var offered = 0
             var skippedProducerDeadlines = 0
             // Supply cadence is diagnostic input, not negotiated frame rate:
@@ -427,6 +452,19 @@ private actor LumenEncoderReplayRunner {
                 }
                 let index = offered
                 let presentationNanos = schedule[index]
+                if initialBitrateForUpdate != nil, !didApplyRateUpdate,
+                   presentationNanos >= 1_000_000_000 {
+                    // Apply the exact live policy after real frames have entered
+                    // VT. Both controls issue the same call; unchanged bitrate
+                    // is deduplicated by the production policy. Compare only
+                    // outputs after a further one-second settling interval.
+                    rateUpdateSucceeded = await runtime.setVideoDeliveryPolicy(
+                        bitrateKbps: bitrate, admissionDivisor: 1
+                    )
+                    rateUpdateCompletedNanos = DispatchTime.now().uptimeNanoseconds
+                    propertiesAfterRateUpdate = readEncoderProperties()
+                    didApplyRateUpdate = true
+                }
                 let displayTime = mach_absolute_time()
                 await withCheckedContinuation { continuation in
                     runtime.queue.async {
@@ -468,12 +506,26 @@ private actor LumenEncoderReplayRunner {
                     let sorted = values.sorted()
                     return sorted[min(Int(ceil(Double(sorted.count - 1) * p)), sorted.count - 1)]
                 }
+                let settledStart = max(startUptimeNanos + 2_000_000_000,
+                    rateUpdateCompletedNanos + 1_000_000_000)
+                let settledIndices = metrics.outputUptimeNanos.indices.filter {
+                    metrics.outputUptimeNanos[$0] >= settledStart
+                }
+                let settledSeconds = max(0, seconds - Double(settledStart - startUptimeNanos) / 1e9)
                 return [
                     "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
                     "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
                         : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
                     "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
                     "forwarderRetention": forwarderRetention,
+                    "initialBitrateKbps": initialBitrateForUpdate ?? bitrate,
+                    "measuredBitrateKbps": bitrate,
+                    "rateUpdateValid": rateUpdateSucceeded && (initialBitrateForUpdate == nil || didApplyRateUpdate),
+                    "settledOutputFrames": settledIndices.count,
+                    "settledSeconds": settledSeconds,
+                    "settledOutputFPS": settledSeconds > 0 ? Double(settledIndices.count) / settledSeconds : 0,
+                    "settledCallbackP95Milliseconds": percentile(settledIndices.map { metrics.latencies[$0] }, 0.95),
+                    "encoderPropertiesAfterRateUpdate": propertiesAfterRateUpdate,
                     "forwarderFrames": forwarder?.snapshot().frameCount ?? 0,
                     "forwarderHasLastSample": forwarder?.snapshot().hasLastSampleBuffer ?? false,
                     "forwarderValid": forwarder == nil || (
