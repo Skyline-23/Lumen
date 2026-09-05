@@ -238,11 +238,12 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
 private struct LumenReplayCompressedSample: @unchecked Sendable {
     let value: CMSampleBuffer
     let acknowledgeAfterDecode: Bool
+    var decoded: (@Sendable (Bool) -> Void)? = nil
 }
 
 private struct LumenTileProbeSample: @unchecked Sendable {
     let sample: CMSampleBuffer?
-    let status: Int32
+    var status: Int32
     let flags: UInt32
     let x: Int32
     let y: Int32
@@ -276,7 +277,13 @@ public final class LumenTileOutputProbe: NSObject {
         self.continuation = continuation
         self.acknowledgements = acks
         self.acknowledge = acknowledge
-        result = Task { await LumenTileOutputCollector().run(stream, benchmark: benchmark) }
+        result = Task {
+            await LumenTileOutputCollector().run(stream, benchmark: benchmark) { output, valid in
+                var completed = output
+                if !valid { completed.status = -1 }
+                acknowledge.yield(completed)
+            }
+        }
         super.init()
     }
 
@@ -287,7 +294,6 @@ public final class LumenTileOutputProbe: NSObject {
             x: x, y: y, width: width, height: height, sourceIndex: sourceIndex,
             callbackNanos: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
         continuation.yield(output)
-        acknowledge.yield(output)
     }
 
     /// Saturated capacity screen, not a production/E2E score. The fixture is
@@ -423,7 +429,8 @@ private actor LumenTileOutputCollector {
         return result
     }
 
-    func run(_ input: AsyncStream<LumenTileProbeSample>, benchmark: Bool) async -> String {
+    func run(_ input: AsyncStream<LumenTileProbeSample>, benchmark: Bool,
+             completed: @escaping @Sendable (LumenTileProbeSample, Bool) -> Void) async -> String {
         var rows: [[String: Any]] = []
         let (compressed, continuation) = AsyncStream<LumenReplayCompressedSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
         let decoder = Task {
@@ -433,6 +440,7 @@ private actor LumenTileOutputCollector {
         }
         var valid = true
         var count = 0
+        var decoderIngressDrops = 0
         var hdrPrefixes = 0
         var staticMetadataValid = true
         for await output in input {
@@ -440,6 +448,7 @@ private actor LumenTileOutputCollector {
             guard let sample = output.sample, output.status == noErr, output.flags & 2 == 0,
                   let format = sample.formatDescription, let block = sample.dataBuffer else {
                 valid = false
+                completed(output, false)
                 rows.append(["status": output.status, "flags": output.flags, "hasSample": output.sample != nil])
                 continue
             }
@@ -555,8 +564,12 @@ private actor LumenTileOutputCollector {
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
                 "durationValid": sample.duration.isValid]) }
             if let normalized {
-                if case .dropped = continuation.yield(.init(value: normalized, acknowledgeAfterDecode: false)) { valid = false }
-            }
+                let sample = LumenReplayCompressedSample(value: normalized, acknowledgeAfterDecode: false,
+                    decoded: { valid in completed(output, valid) })
+                if case .dropped = continuation.yield(sample) {
+                    decoderIngressDrops += 1; valid = false; completed(output, false)
+                }
+            } else { completed(output, false) }
         }
         continuation.finish()
         let decoded = await decoder.value
@@ -565,14 +578,14 @@ private actor LumenTileOutputCollector {
         let metadataEquivalent = staticMetadataValid && hdrPrefixes > 0 && valid
         let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid && metadataEquivalent,
             "hdrMetadataEquivalent": metadataEquivalent, "hdrPrefixCount": hdrPrefixes,
-            "sampleCount": count, "outputs": rows, "decoder": decoded]
+            "sampleCount": count, "decoderIngressDrops": decoderIngressDrops, "outputs": rows, "decoder": decoded]
         return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)) ?? Data(), as: UTF8.self)
     }
 }
 
 private final class LumenReplayDecodeAcknowledgement: Sendable {
-    let acknowledge: @Sendable () -> Void
-    init(_ acknowledge: @escaping @Sendable () -> Void) { self.acknowledge = acknowledge }
+    let acknowledge: @Sendable (Bool) -> Void
+    init(_ acknowledge: @escaping @Sendable (Bool) -> Void) { self.acknowledge = acknowledge }
 }
 
 private final class LumenReplayDecodeCallback: Sendable {
@@ -618,6 +631,7 @@ private actor LumenReplayDecoderLoad {
             if session == nil {
                 guard let format = sample.value.formatDescription else {
                     failures += 1
+                    sample.decoded?(false)
                     continue
                 }
                 var record = VTDecompressionOutputCallbackRecord(
@@ -643,7 +657,7 @@ private actor LumenReplayDecoderLoad {
                             ))
                         } == true
                         context.output.yield(valid)
-                        if valid { acknowledgement?.acknowledge() }
+                        acknowledgement?.acknowledge(valid)
                     },
                     decompressionOutputRefCon: Unmanaged.passUnretained(callback).toOpaque()
                 )
@@ -655,7 +669,7 @@ private actor LumenReplayDecoderLoad {
                                             kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
                     outputCallback: &record, decompressionSessionOut: &session
                 )
-                guard status == noErr, let session else { failures += 1; continue }
+                guard status == noErr, let session else { failures += 1; sample.decoded?(false); continue }
                 var value: CFTypeRef?
                 hardware = VTSessionCopyProperty(session,
                     key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
@@ -663,9 +677,12 @@ private actor LumenReplayDecoderLoad {
                 if VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime,
                                         value: kCFBooleanTrue) != noErr { failures += 1 }
             }
-            guard let session else { failures += 1; continue }
-            let acknowledgement = sample.acknowledgeAfterDecode
-                ? Unmanaged.passRetained(LumenReplayDecodeAcknowledgement(acknowledge)).toOpaque()
+            guard let session else { failures += 1; sample.decoded?(false); continue }
+            let acknowledgement = sample.acknowledgeAfterDecode || sample.decoded != nil
+                ? Unmanaged.passRetained(LumenReplayDecodeAcknowledgement { valid in
+                    if valid && sample.acknowledgeAfterDecode { acknowledge() }
+                    sample.decoded?(valid)
+                }).toOpaque()
                 : nil
             let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample.value,
                 flags: [._EnableAsynchronousDecompression, ._1xRealTimePlayback],
@@ -675,6 +692,7 @@ private actor LumenReplayDecoderLoad {
                 if let acknowledgement {
                     Unmanaged<LumenReplayDecodeAcknowledgement>.fromOpaque(acknowledgement).release()
                 }
+                sample.decoded?(false)
             }
         }
         if let session {
