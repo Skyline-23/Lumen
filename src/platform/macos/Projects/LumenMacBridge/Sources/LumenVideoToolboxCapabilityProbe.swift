@@ -9,10 +9,10 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
-        duration: Double, comparePeriodic: Bool, compareOverlap: Bool,
+        duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
         completion: @escaping @Sendable (String) -> Void
     ) {
         guard frames.count > 0, frames.count <= 32, width > 0, height > 0,
@@ -24,7 +24,17 @@ public final class LumenEncoderReplayProbe: NSObject {
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if compareOverlap {
+            if compareDecoderLoad {
+                var results: [String] = []
+                for enabled in [false, true, false] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        decoderLoad: enabled
+                    ))
+                }
+                completion("{\"mode\":\"production-decoder-load-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if compareOverlap {
                 var results: [String] = []
                 for enabled in [false, true, false] {
                     results.append(await runner.run(
@@ -65,6 +75,7 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     var bytes = 0
     var hdrValid = true
     var keyFrames = 0
+    var decodeInputDrops = 0
 
     func record(_ frame: LumenEncodedFrame, requiresHDR: Bool) {
         if let latency = frame.outputCallbackLatencyMilliseconds {
@@ -84,6 +95,92 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
     }
 }
 
+private struct LumenReplayCompressedSample: @unchecked Sendable {
+    let value: CMSampleBuffer
+}
+
+private final class LumenReplayDecodeCallback: Sendable {
+    let output: AsyncStream<Bool>.Continuation
+    let pixelFormat: OSType
+    init(output: AsyncStream<Bool>.Continuation, pixelFormat: OSType) {
+        self.output = output
+        self.pixelFormat = pixelFormat
+    }
+}
+
+/// Diagnostic only: feed each encoded frame to a hardware decoder without
+/// retaining its output, network traffic, rendering, or a second capture path.
+/// The actor serializes the VT API; its callback only yields a validation bit.
+private actor LumenReplayDecoderLoad {
+    func run(_ input: AsyncStream<LumenReplayCompressedSample>,
+             pixelFormat: OSType) async -> [String: Int] {
+        let (outputs, continuation) = AsyncStream<Bool>.makeStream()
+        let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat)
+        let collector = Task {
+            var decoded = 0
+            var invalid = 0
+            for await valid in outputs {
+                if valid { decoded += 1 } else { invalid += 1 }
+            }
+            return ["decoded": decoded, "invalidOutputs": invalid]
+        }
+        var session: VTDecompressionSession?
+        var submitted = 0
+        var failures = 0
+        var hardware = false
+        for await sample in input {
+            if session == nil {
+                guard let format = sample.value.formatDescription else {
+                    failures += 1
+                    continue
+                }
+                var record = VTDecompressionOutputCallbackRecord(
+                    decompressionOutputCallback: { refcon, _, status, _, image, _, _ in
+                        guard let refcon else { return }
+                        let context = Unmanaged<LumenReplayDecodeCallback>
+                            .fromOpaque(refcon).takeUnretainedValue()
+                        context.output.yield(status == noErr && image.map {
+                            CVPixelBufferGetPixelFormatType($0) == context.pixelFormat
+                        } == true)
+                    },
+                    decompressionOutputRefCon: Unmanaged.passUnretained(callback).toOpaque()
+                )
+                let status = VTDecompressionSessionCreate(
+                    allocator: kCFAllocatorDefault, formatDescription: format,
+                    decoderSpecification: [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary,
+                    imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: pixelFormat,
+                                            kCVPixelBufferMetalCompatibilityKey: true,
+                                            kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
+                    outputCallback: &record, decompressionSessionOut: &session
+                )
+                guard status == noErr, let session else { failures += 1; continue }
+                var value: CFTypeRef?
+                hardware = VTSessionCopyProperty(session,
+                    key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                    allocator: nil, valueOut: &value) == noErr && value as? Bool == true
+                if VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime,
+                                        value: kCFBooleanTrue) != noErr { failures += 1 }
+            }
+            guard let session else { failures += 1; continue }
+            let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample.value,
+                flags: [._EnableAsynchronousDecompression, ._1xRealTimePlayback],
+                frameRefcon: nil, infoFlagsOut: nil)
+            if status == noErr { submitted += 1 } else { failures += 1 }
+        }
+        if let session {
+            if VTDecompressionSessionWaitForAsynchronousFrames(session) != noErr { failures += 1 }
+            VTDecompressionSessionInvalidate(session)
+        }
+        continuation.finish()
+        var result = await collector.value
+        result["submitted"] = submitted
+        result["failures"] = failures
+        result["hardware"] = hardware ? 1 : 0
+        _fixLifetime(callback)
+        return result
+    }
+}
+
 private actor LumenEncoderReplayRunner {
     private var runtime: LumenScreenCaptureVideoRuntime?
 
@@ -93,8 +190,14 @@ private actor LumenEncoderReplayRunner {
 
     func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
              hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int,
-             overlapEnabled: Bool = true) async -> String {
+             overlapEnabled: Bool = true, decoderLoad: Bool = false) async -> String {
         let metrics = LumenEncoderReplayMetrics()
+        let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
+            .makeStream(bufferingPolicy: .bufferingOldest(4))
+        let decodeTask = decoderLoad ? Task {
+            await LumenReplayDecoderLoad().run(decodeInput,
+                pixelFormat: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        } : nil
         do {
             let configuration = LumenMacCaptureConfiguration(
                 displayID: 0, codec: .hevc,
@@ -117,6 +220,9 @@ private actor LumenEncoderReplayRunner {
                 configuration: configuration,
                 callbacks: .init(frameHandler: { [self] frame in
                     metrics.record(frame, requiresHDR: hdr)
+                    if decoderLoad, case .dropped = decodeContinuation.yield(
+                        LumenReplayCompressedSample(value: frame.sampleBuffer)
+                    ) { metrics.decodeInputDrops += 1 }
                     if frame.requiresBootstrapAcknowledgement {
                         Task { await acknowledge() }
                     }
@@ -185,6 +291,8 @@ private actor LumenEncoderReplayRunner {
             await runtime.stop()
             let elapsed = start.duration(to: clock.now)
             let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            decodeContinuation.finish()
+            let decodeResult = await decodeTask?.value ?? [:]
             let result: [String: Any] = runtime.queue.sync {
                 func percentile(_ values: [Double], _ p: Double) -> Double {
                     guard !values.isEmpty else { return 0 }
@@ -194,6 +302,8 @@ private actor LumenEncoderReplayRunner {
                 return [
                     "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
                     "overlapEnabled": overlapEnabled,
+                    "decoderLoad": decoderLoad, "decoder": decodeResult,
+                    "decodeInputDrops": metrics.decodeInputDrops,
                     "outputFPS": Double(metrics.latencies.count) / seconds,
                     "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
@@ -213,6 +323,8 @@ private actor LumenEncoderReplayRunner {
             return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
         } catch {
             await runtime?.stop()
+            decodeContinuation.finish()
+            _ = await decodeTask?.value
             runtime = nil
             let result = ["error": error.localizedDescription]
             return String(decoding: (try? JSONSerialization.data(withJSONObject: result)) ?? Data(), as: UTF8.self)
