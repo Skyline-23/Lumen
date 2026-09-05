@@ -249,6 +249,7 @@ private struct LumenTileProbeSample: @unchecked Sendable {
     let width: Int32
     let height: Int32
     let sourceIndex: Int32
+    let callbackNanos: UInt64
 }
 
 /// Bounded C-callback ingress for the existing screen harness. Mutable sample
@@ -257,6 +258,8 @@ private struct LumenTileProbeSample: @unchecked Sendable {
 public final class LumenTileOutputProbe: NSObject {
     private let continuation: AsyncStream<LumenTileProbeSample>.Continuation
     private let result: Task<String, Never>
+    private let acknowledgements: AsyncStream<LumenTileProbeSample>
+    private let acknowledge: AsyncStream<LumenTileProbeSample>.Continuation
 
     @objc public static var hdrProperties: NSDictionary {
         [kVTCompressionPropertyKey_HDRMetadataInsertionMode as String: kVTHDRMetadataInsertionMode_Auto,
@@ -264,18 +267,50 @@ public final class LumenTileOutputProbe: NSObject {
          kVTCompressionPropertyKey_ContentLightLevelInfo as String: LumenVideoContentLightLevelInfo.hdr10Default().encodedData] as NSDictionary
     }
 
-    @objc public override init() {
+    @objc public override convenience init() { self.init(benchmark: false) }
+
+    @objc(initWithBenchmark:)
+    public init(benchmark: Bool) {
         let (stream, continuation) = AsyncStream<LumenTileProbeSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        let (acks, acknowledge) = AsyncStream<LumenTileProbeSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
         self.continuation = continuation
-        result = Task { await LumenTileOutputCollector().run(stream) }
+        self.acknowledgements = acks
+        self.acknowledge = acknowledge
+        result = Task { await LumenTileOutputCollector().run(stream, benchmark: benchmark) }
         super.init()
     }
 
     @objc(recordSample:status:flags:x:y:width:height:sourceIndex:)
     public func record(sample: CMSampleBuffer?, status: Int32, flags: UInt32,
                        x: Int32, y: Int32, width: Int32, height: Int32, sourceIndex: Int32) {
-        continuation.yield(.init(sample: sample, status: status, flags: flags,
-                                 x: x, y: y, width: width, height: height, sourceIndex: sourceIndex))
+        let output = LumenTileProbeSample(sample: sample, status: status, flags: flags,
+            x: x, y: y, width: width, height: height, sourceIndex: sourceIndex,
+            callbackNanos: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+        continuation.yield(output)
+        acknowledge.yield(output)
+    }
+
+    /// Saturated capacity screen, not a production/E2E score. The fixture is
+    /// immutable and shared with the normal-session control. Two slots only.
+    @objc(benchmarkWithFrames:duration:encode:drain:completion:)
+    public func benchmark(frames: NSArray, duration: Double,
+                          encode: @escaping @Sendable (CVPixelBuffer, Int32, Bool) -> Int32,
+                          drain: @escaping @Sendable () -> Int32,
+                          completion: @escaping @Sendable (String) -> Void) {
+        guard frames.count == 16, duration.isFinite, (1 ... 30).contains(duration) else {
+            completion("{\"error\":\"invalid-tile-benchmark-arguments\"}"); return
+        }
+        let fixture = LumenEncoderReplayFixture(buffers: frames.map { $0 as! CVPixelBuffer })
+        let acks = acknowledgements
+        let finish = continuation
+        let pending = result
+        Task {
+            let timing = await LumenTileReplayDriver().run(fixture: fixture, duration: duration,
+                outputs: acks, encode: encode, drain: drain)
+            finish.finish()
+            let validation = await pending.value
+            completion("{\"timing\":" + timing + ",\"validation\":" + validation + "}")
+        }
     }
 
     @objc(finishWithCompletion:)
@@ -283,6 +318,74 @@ public final class LumenTileOutputProbe: NSObject {
         continuation.finish()
         let pending = result
         Task { completion(await pending.value) }
+    }
+}
+
+private actor LumenTileReplayDriver {
+    func run(fixture: LumenEncoderReplayFixture, duration: Double,
+             outputs: AsyncStream<LumenTileProbeSample>,
+             encode: @Sendable (CVPixelBuffer, Int32, Bool) -> Int32,
+             drain: @Sendable () -> Int32) async -> String {
+        let start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let measureStart = start + 1_000_000_000
+        let end = measureStart + UInt64(duration * 1e9)
+        var submitted: Int32 = 0
+        var received = 0
+        var measured = 0
+        var bytes = 0
+        var failed = 0
+        var lastKeyframe: UInt64 = 0
+        var pending: [Int32: UInt64] = [:]
+        var latencies: [Double] = []
+        var calls: [Double] = []
+        var gaps: [Double] = []
+        var lastCallback: UInt64?
+        var peak = 0
+        func submit() {
+            let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            guard now < end, failed == 0, submitted < 10_000 else { return }
+            let force = lastKeyframe == 0 || now - lastKeyframe >= 1_000_000_000
+            if force { lastKeyframe = now }
+            let index = submitted
+            pending[index] = now
+            let status = encode(fixture.buffers[Int(index) % fixture.buffers.count], index, force)
+            let after = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            if now >= measureStart { calls.append(Double(after - now) / 1e6) }
+            if status == noErr { submitted += 1; peak = max(peak, pending.count) }
+            else { failed += 1; pending.removeValue(forKey: index) }
+        }
+        submit(); submit()
+        if !pending.isEmpty {
+            for await output in outputs {
+                guard let began = pending.removeValue(forKey: output.sourceIndex) else { failed += 1; continue }
+                if output.sourceIndex != Int32(received) || output.status != noErr || output.sample == nil || output.flags & 2 != 0 { failed += 1 }
+                received += 1
+                let stamp = output.callbackNanos
+                if stamp >= measureStart && stamp < end {
+                    measured += 1
+                    bytes += output.sample.map(CMSampleBufferGetTotalSampleSize) ?? 0
+                    latencies.append(Double(stamp - began) / 1e6)
+                    if let lastCallback { gaps.append(Double(stamp - lastCallback) / 1e6) }
+                    lastCallback = stamp
+                }
+                submit()
+                if pending.isEmpty { break }
+            }
+        }
+        let drainStatus = drain()
+        func percentile(_ input: [Double], _ p: Double) -> Double {
+            let values = input.sorted()
+            return values.isEmpty ? 0 : values[min(values.count - 1, Int(ceil(Double(values.count - 1) * p)))]
+        }
+        let value: [String: Any] = ["mode": "two-slot-saturated-capacity-screen", "warmupSeconds": 1,
+            "durationSeconds": duration, "submitted": submitted, "received": received,
+            "measuredOutputs": measured, "outputFPS": Double(measured) / duration, "encodedBytes": bytes,
+            "callbackP50Milliseconds": percentile(latencies, 0.5), "callbackP95Milliseconds": percentile(latencies, 0.95),
+            "outputGapP95Milliseconds": percentile(gaps, 0.95), "encodeCallP95Milliseconds": percentile(calls, 0.95),
+            "peakInflight": peak, "failures": failed, "drainStatus": drainStatus,
+            "valid": failed == 0 && received == submitted && measured > 0 && peak <= 2 && drainStatus == noErr,
+            "productionAcceptance": false]
+        return String(decoding: (try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys)) ?? Data(), as: UTF8.self)
     }
 }
 
@@ -320,13 +423,20 @@ private actor LumenTileOutputCollector {
         return result
     }
 
-    func run(_ input: AsyncStream<LumenTileProbeSample>) async -> String {
+    func run(_ input: AsyncStream<LumenTileProbeSample>, benchmark: Bool) async -> String {
         var rows: [[String: Any]] = []
         let (compressed, continuation) = AsyncStream<LumenReplayCompressedSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        let decoder = Task {
+            await LumenReplayDecoderLoad().run(compressed,
+                pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true,
+                requiresStaticHDR: true, acknowledge: {})
+        }
         var valid = true
+        var count = 0
         var hdrPrefixes = 0
         var staticMetadataValid = true
         for await output in input {
+            count += 1
             guard let sample = output.sample, output.status == noErr, output.flags & 2 == 0,
                   let format = sample.formatDescription, let block = sample.dataBuffer else {
                 valid = false
@@ -419,7 +529,7 @@ private actor LumenTileOutputCollector {
                 (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_ContentLightLevelInfo) as? Data) == contentLight
             } ?? false
             staticMetadataValid = staticMetadataValid && formatMetadataValid
-            if let rebuilt, (0 ... 2).contains(output.sourceIndex) {
+            if let rebuilt, output.sourceIndex >= 0 && (benchmark || output.sourceIndex <= 2) {
                 // These three synthetic inputs have explicit 120 Hz source
                 // times. Restore the submitted index, never callback order.
                 var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 120),
@@ -434,7 +544,7 @@ private actor LumenTileOutputCollector {
             valid = valid && parsed && offset == size && !vcl.isEmpty && rebuiltPQ && normalizeStatus == noErr &&
                 dimensions.width == 3840 && dimensions.height == 2160 &&
                 output.x == 0 && output.y == 0 && output.width == 3840 && output.height == 2160
-            rows.append(["status": output.status, "flags": output.flags, "bytes": size,
+            if rows.count < 3 { rows.append(["status": output.status, "flags": output.flags, "bytes": size,
                 "origin": [output.x, output.y], "tileSize": [output.width, output.height],
                 "formatSize": [dimensions.width, dimensions.height], "nalTypes": nalTypes,
                 "parameterSets": parameterSets,
@@ -443,21 +553,19 @@ private actor LumenTileOutputCollector {
                 "hdrPrefixBytes": prefixBytes, "staticHDRInFormat": formatMetadataValid,
                 "formatExtensionKeys": (CMFormatDescriptionGetExtensions(format) as? [String: Any])?.keys.sorted() ?? [],
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
-                "durationValid": sample.duration.isValid])
+                "durationValid": sample.duration.isValid]) }
             if let normalized {
                 if case .dropped = continuation.yield(.init(value: normalized, acknowledgeAfterDecode: false)) { valid = false }
             }
         }
         continuation.finish()
-        let decoded = await LumenReplayDecoderLoad().run(compressed,
-            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true,
-            requiresStaticHDR: true, acknowledge: {})
-        valid = valid && rows.count == 3 && decoded["hardware"] == 1 && decoded["decoded"] == 3 &&
-            decoded["submitted"] == 3 && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
-        let metadataEquivalent = staticMetadataValid && hdrPrefixes == 1 && valid
+        let decoded = await decoder.value
+        valid = valid && (benchmark ? count > 3 : count == 3) && decoded["hardware"] == 1 && decoded["decoded"] == count &&
+            decoded["submitted"] == count && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
+        let metadataEquivalent = staticMetadataValid && hdrPrefixes > 0 && valid
         let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid && metadataEquivalent,
             "hdrMetadataEquivalent": metadataEquivalent, "hdrPrefixCount": hdrPrefixes,
-            "outputs": rows, "decoder": decoded]
+            "sampleCount": count, "outputs": rows, "decoder": decoded]
         return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)) ?? Data(), as: UTF8.self)
     }
 }

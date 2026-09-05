@@ -1049,9 +1049,24 @@ static void LumenProbeTileOutput(void *context, void *sourceContext,
     x:point.x y:point.y width:size.width height:size.height sourceIndex:(int32_t)((uintptr_t)sourceContext)-1];
 }
 
+static void LumenProbeRegularTileControlOutput(void *context, void *sourceContext,
+  OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sample) {
+  LumenProbeTileOutput(context,sourceContext,(LumenProbeTilePoint){0,0},
+    (LumenProbeTileSize){3840,2160},status,flags,sample);
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     if (LumenProbeHasFlag(argc, argv, @"--hevc-tile-capabilities")) {
+      NSString *benchmarkArgument = LumenProbeArgument(argc,argv,@"--benchmark-tile-seconds");
+      double benchmarkSeconds = benchmarkArgument.doubleValue;
+      BOOL benchmark = benchmarkArgument != nil;
+      BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control");
+      if ((benchmark && (!isfinite(benchmarkSeconds) || benchmarkSeconds < 1 || benchmarkSeconds > 30 ||
+          !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) ||
+          (regularControl && !benchmark)) {
+        LumenProbePrintJSON(@{@"error":@"invalid-tile-capacity-screen-arguments"}); return 20;
+      }
       // Discovery only: never creates a display or starts capture/encoding.
       CFArrayRef list = NULL;
       OSStatus listStatus = VTCopyVideoEncoderList(NULL, &list);
@@ -1093,21 +1108,30 @@ int main(int argc, const char *argv[]) {
         TileCopy copy = (TileCopy)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionCopyProperty");
         TileSet set = (TileSet)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionSetProperty");
         TileInvalidate invalidate = (TileInvalidate)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionInvalidate");
+        if (regularControl) {
+          copy = (TileCopy)VTSessionCopyProperty;
+          set = (TileSet)VTSessionSetProperty;
+          invalidate = (TileInvalidate)VTCompressionSessionInvalidate;
+        }
         if (!create || !copy || !set || !invalidate || !tileKey || !*tileKey) {
           tileSession[@"error"] = @"tile-symbol-unavailable";
         } else {
-          NSDictionary *spec = @{(__bridge NSString *)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:@YES,
-            (__bridge NSString *)*tileKey:@YES};
+          NSMutableDictionary *spec = [@{(__bridge NSString *)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:@YES} mutableCopy];
+          if (!regularControl) spec[(__bridge NSString *)*tileKey] = @YES;
           NSDictionary *attrs = @{(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),
             (__bridge NSString *)kCVPixelBufferWidthKey:@3840, (__bridge NSString *)kCVPixelBufferHeightKey:@2160,
             (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey:@{}};
           CFTypeRef session = NULL;
           BOOL encodeTiles = LumenProbeHasFlag(argc, argv, @"--encode-tile-samples");
-          LumenTileOutputProbe *collector = encodeTiles ? [LumenTileOutputProbe new] : nil;
-          OSStatus status = create(kCFAllocatorDefault, (CMVideoDimensions){3840,2160}, kCMVideoCodecType_HEVC,
+          LumenTileOutputProbe *collector = encodeTiles ? [[LumenTileOutputProbe alloc] initWithBenchmark:benchmark] : nil;
+          OSStatus status = regularControl ? VTCompressionSessionCreate(NULL,3840,2160,kCMVideoCodecType_HEVC,
+            (__bridge CFDictionaryRef)spec,(__bridge CFDictionaryRef)attrs,NULL,
+            LumenProbeRegularTileControlOutput,(__bridge void *)collector,(VTCompressionSessionRef *)&session) :
+            create(kCFAllocatorDefault, (CMVideoDimensions){3840,2160}, kCMVideoCodecType_HEVC,
             (__bridge CFDictionaryRef)spec, (__bridge CFDictionaryRef)attrs, NULL,
             encodeTiles ? (void *)LumenProbeTileOutput : NULL, (__bridge void *)collector, &session);
           tileSession[@"createStatus"] = @(status);
+          tileSession[@"sessionKind"] = regularControl ? @"regular-control" : @"private-tile";
           if (session) {
             tileSession[@"main10Status"] = @(set(session,kVTCompressionPropertyKey_ProfileLevel,kVTProfileLevel_HEVC_Main10_AutoLevel));
             NSMutableDictionary *values = [NSMutableDictionary dictionary];
@@ -1142,7 +1166,8 @@ int main(int argc, const char *argv[]) {
               typedef OSStatus (*TileSupported)(CFTypeRef, CFDictionaryRef *);
               TileSupported supported = (TileSupported)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionCopySupportedPropertyDictionary");
               CFDictionaryRef all = NULL;
-              OSStatus supportedStatus = supported ? supported(session,&all) : -12900;
+              OSStatus supportedStatus = regularControl ? VTSessionCopySupportedPropertyDictionary(session,&all) :
+                (supported ? supported(session,&all) : -12900);
               NSMutableDictionary *rateProperties = [NSMutableDictionary dictionary];
               for (NSString *key in (__bridge NSDictionary *)all)
                 if ([key localizedCaseInsensitiveContainsString:@"rate"] ||
@@ -1161,7 +1186,8 @@ int main(int argc, const char *argv[]) {
               // it does not assume a layout for either private payload.
               typedef OSStatus (*TilePrepare)(CFTypeRef, const void *, void **);
               TilePrepare prepare = (TilePrepare)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionPrepareToEncodeTiles");
-              tileSession[@"prepareStatus"] = prepare ? @(prepare(session, NULL, NULL)) : @(-12900);
+              tileSession[@"prepareStatus"] = regularControl ? @(VTCompressionSessionPrepareToEncodeFrames((VTCompressionSessionRef)session)) :
+                (prepare ? @(prepare(session, NULL, NULL)) : @(-12900));
             }
             if (encodeTiles && [tileSession[@"prepareStatus"] intValue] == 0) {
               typedef OSStatus (*TileEncode)(CFTypeRef, CVPixelBufferRef, LumenProbeTilePoint,
@@ -1170,7 +1196,8 @@ int main(int argc, const char *argv[]) {
               TileEncode encode = (TileEncode)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionEncodeTile");
               TileComplete complete = (TileComplete)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionCompleteTiles");
               NSMutableArray *submissions = [NSMutableArray array];
-              if (encode && complete) for (int frame=0; frame<3; frame++) {
+              NSMutableArray *fixture = [NSMutableArray array];
+              if (encode && complete) for (int frame=0; frame<(benchmark ? 16 : 3); frame++) {
                 CVPixelBufferRef buffer = NULL;
                 CVReturn allocation = CVPixelBufferCreate(NULL,3840,2160,kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
                   (__bridge CFDictionaryRef)attrs,&buffer);
@@ -1190,6 +1217,7 @@ int main(int argc, const char *argv[]) {
                 CVBufferSetAttachment(buffer,kCVImageBufferColorPrimariesKey,kCVImageBufferColorPrimaries_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
                 CVBufferSetAttachment(buffer,kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,kCVAttachmentMode_ShouldPropagate);
                 CVBufferSetAttachment(buffer,kCVImageBufferYCbCrMatrixKey,kCVImageBufferYCbCrMatrix_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
+                if (benchmark) { [fixture addObject:CFBridgingRelease(buffer)]; continue; }
                 VTEncodeInfoFlags flags = 0;
                 OSStatus encoded = encode(session,buffer,(LumenProbeTilePoint){0,0},
                   (LumenProbeTileSize){3840,2160},NULL,(void *)(uintptr_t)(frame+1),&flags);
@@ -1201,6 +1229,32 @@ int main(int argc, const char *argv[]) {
               }
               else tileSession[@"error"] = @"tile-encode-symbol-unavailable";
               tileSession[@"submissionStatuses"] = submissions;
+              if (benchmark && fixture.count == 16 && !tileSession[@"error"]) {
+                tileSession[@"fixtureAudit"] = LumenProbeReplayFixtureAudit(fixture);
+                dispatch_semaphore_t done = dispatch_semaphore_create(0);
+                __block NSString *benchmarkOutput;
+                [collector benchmarkWithFrames:fixture duration:benchmarkSeconds
+                  encode:^int32_t(CVPixelBufferRef buffer, int32_t index, BOOL force) {
+                    NSDictionary *properties = force ? @{(__bridge id)kVTEncodeFrameOptionKey_ForceKeyFrame:@YES} : @{};
+                    VTEncodeInfoFlags flags = 0;
+                    if (regularControl) return VTCompressionSessionEncodeFrame((VTCompressionSessionRef)session,buffer,
+                      CMTimeMake(index,120),CMTimeMake(1,120),(__bridge CFDictionaryRef)properties,
+                      (void *)(uintptr_t)(index+1),&flags);
+                    return encode(session,buffer,(LumenProbeTilePoint){0,0},(LumenProbeTileSize){3840,2160},
+                      (__bridge CFDictionaryRef)properties,(void *)(uintptr_t)(index+1),&flags);
+                  } drain:^int32_t {
+                    return regularControl ? VTCompressionSessionCompleteFrames((VTCompressionSessionRef)session,kCMTimeInvalid) : complete(session);
+                  } completion:^(NSString *json) { benchmarkOutput=json;dispatch_semaphore_signal(done); }];
+                if (dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,(int64_t)((benchmarkSeconds+20)*NSEC_PER_SEC))) != 0) {
+                  LumenProbePrintJSON(@{@"error":@"tile-capacity-screen-timeout"}); return 20;
+                }
+                NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[benchmarkOutput dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+                tileSession[@"benchmark"] = result ?: @{};
+                tileSession[@"output"] = result[@"validation"] ?: @{};
+                if (![result[@"timing"][@"valid"] boolValue] || ![result[@"validation"][@"valid"] boolValue])
+                  tileSession[@"error"] = @"tile-capacity-screen-invalid";
+                collector = nil;
+              }
             }
             invalidate(session);
             CFRelease(session);
