@@ -600,11 +600,15 @@ private actor LumenTileOutputCollector {
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
                 "durationValid": sample.duration.isValid]) }
             if let normalized {
+                let inspector: (@Sendable (CVPixelBuffer) -> Void)?
+                if regionInspection {
+                    inspector = { buffer in
+                        pixelContinuation.yield(Self.inspectCanvas(buffer, index: output.sourceIndex))
+                    }
+                } else { inspector = nil }
                 let sample = LumenReplayCompressedSample(value: normalized, acknowledgeAfterDecode: false,
                     decoded: { valid in completed(output, valid) },
-                    inspect: regionInspection ? { buffer in
-                        pixelContinuation.yield(Self.inspectCanvas(buffer, index: output.sourceIndex))
-                    } : nil)
+                    inspect: inspector)
                 if case .dropped = continuation.yield(sample) {
                     decoderIngressDrops += 1; valid = false; completed(output, false)
                 }
