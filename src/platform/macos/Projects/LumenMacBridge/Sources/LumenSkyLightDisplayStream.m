@@ -10,31 +10,6 @@
 
 #include <dlfcn.h>
 #include <limits.h>
-#include <stdlib.h>
-#include <string.h>
-
-#if DEBUG
-// Process-local diagnostic, not a persistent OS preference. On macOS 27,
-// VTApplyRestrictions bit 4 selects in-process encoder factories and must run
-// before either codec registry is initialized. The ordinary session option
-// AllowClientProcessEncode alone was observed to keep using the remote encoder.
-// Restrict this opt-in to an isolated worker/probe; verify AppleVideoEncoder is
-// loaded in that process before treating a measurement as an in-process run.
-__attribute__((constructor))
-static void LumenConfigureDiagnosticEncoderExecution(void) {
-  const char *mode = getenv("LUMEN_ENCODER_EXECUTION");
-  if (mode == NULL || strcmp(mode, "client-process") != 0) { return; }
-  void *library = dlopen(
-    "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
-    RTLD_NOW | RTLD_LOCAL);
-  typedef int32_t (*ApplyRestrictions)(uint32_t);
-  ApplyRestrictions apply = library == NULL ? NULL
-    : (ApplyRestrictions)dlsym(library, "VTApplyRestrictions");
-  const int32_t status = apply == NULL ? -1 : apply(1u << 4);
-  fprintf(stderr, "Lumen diagnostic stage=encoder-client-process-restriction status=%d\n", status);
-  if (library != NULL) { dlclose(library); }
-}
-#endif
 
 static NSString *const LumenSkyLightContentStreamErrorDomain =
   @"dev.skyline23.lumen.skylight-content-stream";
