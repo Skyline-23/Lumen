@@ -9,12 +9,13 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:sourceArrivalNanos:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:compareForwarder:sourceArrivalNanos:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
         compareSourceCadence: Bool,
         compareMetalStaging: Bool,
+        compareForwarder: Bool,
         sourceArrivalNanos: [NSNumber]?,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
@@ -29,7 +30,17 @@ public final class LumenEncoderReplayProbe: NSObject {
         let arrivals = sourceArrivalNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if compareMetalStaging {
+            if compareForwarder {
+                var results: [String] = []
+                for enabled in [false, true, false] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        forwarderRetention: enabled
+                    ))
+                }
+                completion("{\"mode\":\"production-forwarder-retention-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if compareMetalStaging {
                 var results: [String] = []
                 for enabled in [false, true, false] {
                     results.append(await runner.run(
@@ -294,8 +305,9 @@ private actor LumenEncoderReplayRunner {
              overlapEnabled: Bool = true, decoderLoad: Bool = false,
              sourceFrameRate: Int = 120, arrivalPattern: [Int64]? = nil,
              arrivalPeriod: Int64 = 0, arrivalKind: String = "constant",
-             metalStaging: Bool? = nil) async -> String {
+             metalStaging: Bool? = nil, forwarderRetention: Bool = false) async -> String {
         let metrics = LumenEncoderReplayMetrics()
+        let forwarder = forwarderRetention ? LumenVideoCaptureForwarder() : nil
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
             .makeStream(bufferingPolicy: .bufferingOldest(4))
         let decodeTask = decoderLoad ? Task {
@@ -325,6 +337,10 @@ private actor LumenEncoderReplayRunner {
                 configuration: configuration,
                 callbacks: .init(frameHandler: { [self] frame in
                     metrics.record(frame, requiresHDR: hdr)
+                    if let forwarder {
+                        _ = forwarder.consume(frame: frame)
+                        _ = forwarder.popNextFrame()
+                    }
                     if decoderLoad, case .dropped = decodeContinuation.yield(
                         LumenReplayCompressedSample(value: frame.sampleBuffer,
                             acknowledgeAfterDecode: frame.requiresBootstrapAcknowledgement)
@@ -457,6 +473,15 @@ private actor LumenEncoderReplayRunner {
                     "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
                         : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
                     "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
+                    "forwarderRetention": forwarderRetention,
+                    "forwarderFrames": forwarder?.snapshot().frameCount ?? 0,
+                    "forwarderHasLastSample": forwarder?.snapshot().hasLastSampleBuffer ?? false,
+                    "forwarderValid": forwarder == nil || (
+                        forwarder!.snapshot().frameCount == metrics.latencies.count &&
+                        forwarder!.snapshot().droppedFrameCount == 0 &&
+                        forwarder!.snapshot().queuedFrameCount == 0 &&
+                        forwarder!.snapshot().hasLastSampleBuffer
+                    ),
                     "metalStaging": metalStaging == true,
                     "metalSubmitted": runtime.skyLightMetalStageSubmissionCount,
                     "metalCompleted": runtime.skyLightMetalStageCompletionCount,

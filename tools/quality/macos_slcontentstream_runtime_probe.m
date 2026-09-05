@@ -1012,10 +1012,19 @@ int main(int argc, const char *argv[]) {
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
     BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
     BOOL compareMetalStaging = LumenProbeHasFlag(argc,argv,@"--compare-metal-staging");
+    BOOL compareForwarder = LumenProbeHasFlag(argc,argv,@"--compare-forwarder");
     BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (compareForwarder && (!productionReplay || compareMetalStaging || compareSourceJitter || compareRawSourceLoad ||
+        LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-source-cadence") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
+      LumenProbePrintJSON(@{@"error":@"forwarder-retention-requires-exclusive-production-replay"});
+      return 13;
+    }
     if (compareMetalStaging && (!productionReplay || compareSourceJitter || compareRawSourceLoad ||
         LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
         LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
@@ -1351,6 +1360,7 @@ int main(int argc, const char *argv[]) {
           compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load")
           compareSourceCadence:LumenProbeHasFlag(argc,argv,@"--compare-source-cadence")
           compareMetalStaging:compareMetalStaging
+          compareForwarder:compareForwarder
           sourceArrivalNanos:compareSourceJitter ? [state.arrivalTimes copy] : nil
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
@@ -1371,6 +1381,7 @@ int main(int argc, const char *argv[]) {
                 ![row[@"decoderValid"] boolValue] ||
                 (row[@"rawSourceValid"] && ![row[@"rawSourceValid"] boolValue]) ||
                 (row[@"metalValid"] && ![row[@"metalValid"] boolValue]) ||
+                (row[@"forwarderValid"] && ![row[@"forwarderValid"] boolValue]) ||
                 [row[@"processingFailures"] intValue] != 0) return 18;
           return 0;
         }
