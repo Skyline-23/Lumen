@@ -86,3 +86,45 @@ Increasing the private queue from two to four is closed. It reduced output to
 72.49 fps, raised VT callback p95 to 57.50 ms, and raised cumulative stream
 drops to 440. More buffering makes frames stale without raising encoder
 throughput.
+
+## 2026-09-05: Native 4K HDR pixel-semantics gate precedes throughput acceptance
+
+The older VT timing measurements above remain specific to their fixtures. They
+do not prove that the live private source contains unclipped HDR pixels. The
+new `--inspect-native-color` mode in the existing screen harness compares eight
+static PQ/BT.2020 patches on an owned virtual display. Only bounded scalar
+samples leave the C callbacks; a Swift actor checks sample accounting, spatial
+uniformity, temporal stability, matrix agreement, and highlight separation.
+
+- On a CG virtual display, 219/219 settled samples were spatially uniform and
+  temporally identical. Requested BT.2020 native P010 instead matched the
+  BT.601 matrix of simultaneous RGB10 samples within 0.487 code values; BT.2020
+  differed by up to 40.899 codes. A separate 210/210 stable BT.709 request gave
+  the same pixels. Exported CG and CoreVideo 709 constants have identical values;
+  a string mapping change is not a fix.
+- That CG display reported current/potential EDR headroom 1 despite HDR creation
+  settings. The existing SL virtual-display implementation reported headroom 5
+  with actual 1920x1080 logical / 3840x2160 backing at 120 Hz. It can be examined
+  without calling unsupported CG mode setters. Legacy `CGDisplayPixelsWide`
+  returns the logical 1920 on this SL display; use the selected mode's pixel
+  dimensions for backing-size validation. Product backend selection is unchanged.
+- On the same SL display, raw RGB10's latest three high-gray samples all had
+  channel code 520 (about 100 nits if interpreted as PQ), whereas SCK canonical
+  HDR P010 preserved distinct Y values 567, 653, and 785 with PQ/BT.2020 metadata.
+  Both streams stopped successfully and all 93 observations were collected.
+  However, the full-run temporal stability gate failed (363-code maximum
+  transient), so this is boundary-localization evidence, not final native HDR
+  color equivalence or a performance acceptance result.
+
+Artifacts are in the sibling Shadow checkout under
+`artifacts/screen-metrics/macos-e2e-20260905/`:
+`native-rgb10-p010-color-settled-2020.jsonlog`,
+`native-rgb10-p010-color-settled-709.jsonlog`,
+`native-rgb10-p010-color-sl-backing.jsonlog`, and
+`native-rgb10-sck-p010-color-sl-reference.jsonlog`.
+
+Next boundary: establish a stable HDR-preserving native source (and correct
+matrix), then validate its GPU conversion and actual end-to-end throughput.
+The synthetic RGB10-to-P010 converter remains unused by production: retagging
+raw RGB10 as PQ cannot recover highlights already clipped upstream. No new
+native 4K HDR 120-FPS or stutter fix has been accepted from these color probes.
