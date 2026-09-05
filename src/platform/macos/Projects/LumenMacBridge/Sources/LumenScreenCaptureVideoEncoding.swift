@@ -173,7 +173,8 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
             value: true as CFBoolean
         )
-        configureAdvertisedTurboThroughputMode()
+        // Keep the hardware encoder's default throughput selection. An
+        // advertised private "turbo" mode is not proof of lower live latency.
         if configuration.codec == .hevc {
             try setProperty(
                 kVTCompressionPropertyKey_AllowOpenGOP,
