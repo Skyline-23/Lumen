@@ -1163,6 +1163,14 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   NSPanel *panel = [[NSPanel alloc] initWithContentRect:frame
     styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel
     backing:NSBackingStoreBuffered defer:NO screen:screen];
+  // initWithContentRect:screen: interprets coordinates relative to that screen;
+  // setFrame uses global AppKit coordinates. Validate before making it visible.
+  [panel setFrame:frame display:NO];
+  if ([panel.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] != displayID || !NSContainsRect(screen.frame,panel.frame)) {
+    LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-panel-left-owned-display",
+      @"requestedFrame":NSStringFromRect(frame),@"panelFrame":NSStringFromRect(panel.frame),
+      @"screenFrame":NSStringFromRect(screen.frame)}); return 22;
+  }
   panel.opaque=YES; panel.hasShadow=NO; panel.ignoresMouseEvents=YES;
   panel.level=NSFloatingWindowLevel;
   panel.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -1188,9 +1196,6 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   CGColorSpaceRelease(colorSpace);
   [panel orderFrontRegardless]; [panel displayIfNeeded];
   LumenProbeRunApplicationForDuration(1);
-  if ([panel.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] != displayID || !NSContainsRect(screen.frame,panel.frame)) {
-    [panel orderOut:nil]; LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-panel-left-owned-display"}); return 22;
-  }
   LumenNativeColorProbe *probe=[LumenNativeColorProbe new];
   NSMutableArray<LumenMacSkyLightDisplayStream *> *streams=[NSMutableArray array];
   // These counters are isolated to the existing serial C callback queue. Main
