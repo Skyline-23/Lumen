@@ -545,14 +545,6 @@ static BOOL LumenContentStreamAvailable(void) {
     properties[minimumFrameTimeKey] = @(MAX(minimumFrameTime, 0.0));
     properties[showCursorKey] = @(showCursor);
     properties[queueDepthKey] = @(MAX(1, MIN(queueDepth, 2)));
-    if (dynamicRangeMode != 0) {
-      // SLContentStream's runtime mapper translates the HDR mode to this
-      // exported raw capture key. Color-space tagging alone leaves raw SDR.
-      NSString *dynamicRangeKey =
-        LumenSkyLightStringConstant("kSLCaptureStreamDynamicRangeMode");
-      if (dynamicRangeKey == nil) { return nil; }
-      properties[dynamicRangeKey] = @(dynamicRangeMode);
-    }
     if (yCbCrMatrix != nil) {
       if (matrixKey == nil) { return nil; }
       properties[matrixKey] = yCbCrMatrix;
