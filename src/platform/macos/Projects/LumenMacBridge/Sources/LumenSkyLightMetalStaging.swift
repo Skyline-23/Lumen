@@ -351,6 +351,9 @@ struct LumenRGB10ConversionSurface: @unchecked Sendable {
 }
 
 struct LumenRGB10ConversionResult: Sendable {
+    // A partial update accepts only a successfully completed result minted by
+    // the same converter, never an arbitrary (possibly uninitialized) P010 buffer.
+    fileprivate let ownerID: UUID
     let surface: LumenRGB10ConversionSurface
     let gpuMilliseconds: Double
     let elapsedMilliseconds: Double
@@ -368,6 +371,7 @@ private struct LumenRGB10ConversionLease: @unchecked Sendable {
 /// Not enabled by the production capture runtime until its live-source color
 /// semantics, buffer history and matched E2E gain have been verified.
 actor LumenRGB10ToP010Converter {
+    private let ownerID = UUID()
     private let resources: LumenSkyLightMetalStagingResources
     private let pipeline: MTLComputePipelineState
     private var inFlightDestinations: Set<UInt> = []
@@ -414,7 +418,7 @@ actor LumenRGB10ToP010Converter {
     }
 
     func convert(_ source: LumenRGB10ConversionSurface,
-                 destination existing: LumenRGB10ConversionSurface? = nil,
+                 destination existing: LumenRGB10ConversionResult? = nil,
                  dirtyRegion: CGRect? = nil) async throws -> LumenRGB10ConversionResult {
         let started = ProcessInfo.processInfo.systemUptime
         guard inFlightDestinations.count < 2,
@@ -426,6 +430,9 @@ actor LumenRGB10ToP010Converter {
             throw LumenSkyLightMetalStagingResourceError("RGB10 source format/color contract or two-slot admission failed")
         }
         let bounds = CGRect(x: 0, y: 0, width: resources.width, height: resources.height)
+        guard existing == nil || existing?.ownerID == ownerID else {
+            throw LumenSkyLightMetalStagingResourceError("RGB10 destination belongs to another converter")
+        }
         let requested = dirtyRegion ?? bounds
         guard requested.origin.x.isFinite, requested.origin.y.isFinite,
               requested.width.isFinite, requested.height.isFinite,
@@ -436,7 +443,7 @@ actor LumenRGB10ToP010Converter {
         let region = CGRect(x: x, y: y, width: ceil(requested.maxX / 2) * 2 - x,
                             height: ceil(requested.maxY / 2) * 2 - y)
         let destination: LumenRGB10ConversionSurface
-        if let existing { destination = existing }
+        if let existing { destination = existing.surface }
         else {
             let (buffer, status) = resources.allocateDestination()
             guard status == kCVReturnSuccess, let buffer else {
@@ -493,7 +500,7 @@ actor LumenRGB10ToP010Converter {
                               kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
         CVBufferSetAttachment(destination.buffer, kCVImageBufferChromaLocationTopFieldKey,
                               kCVImageBufferChromaLocation_Center, .shouldPropagate)
-        return .init(surface: destination, gpuMilliseconds: outcome.1,
+        return .init(ownerID: ownerID, surface: destination, gpuMilliseconds: outcome.1,
                      elapsedMilliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1_000, region: region)
     }
 }

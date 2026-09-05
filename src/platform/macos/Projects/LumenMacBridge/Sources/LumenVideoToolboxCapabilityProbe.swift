@@ -33,13 +33,21 @@ private actor LumenRGB10ConversionProbeRunner {
             let full = try await converter.convert(source)
             var rejectedOutOfBounds = false
             do {
-                _ = try await converter.convert(source, destination: full.surface,
+                _ = try await converter.convert(source, destination: full,
                     dirtyRegion: CGRect(x: 3839, y: 0, width: 2, height: 2))
             } catch let error as LumenSkyLightMetalStagingResourceError {
                 rejectedOutOfBounds = error.reason == "Partial conversion requires valid region and initialized destination"
             }
             let fullInspection = try JSONSerialization.jsonObject(with: Data(inspect(full.surface.buffer, false).utf8)) as? [String: Any] ?? [:]
-            let partial = try await converter.convert(changed, destination: full.surface,
+            let unrelatedConverter = try LumenRGB10ToP010Converter(width: 3840, height: 2160)
+            var rejectedForeignDestination = false
+            do {
+                _ = try await unrelatedConverter.convert(source, destination: full,
+                    dirtyRegion: CGRect(x: 0, y: 0, width: 2, height: 2))
+            } catch let error as LumenSkyLightMetalStagingResourceError {
+                rejectedForeignDestination = error.reason == "RGB10 destination belongs to another converter"
+            }
+            let partial = try await converter.convert(changed, destination: full,
                 dirtyRegion: CGRect(x: 127, y: 129, width: 513, height: 259))
             let partialInspection = try JSONSerialization.jsonObject(with: Data(inspect(partial.surface.buffer, true).utf8)) as? [String: Any] ?? [:]
             result["full"] = fullInspection
@@ -53,8 +61,9 @@ private actor LumenRGB10ConversionProbeRunner {
             result["unchangedRegionBitExact"] = unchanged
             result["rejectedUninitializedPartial"] = rejectedUninitializedPartial
             result["rejectedOutOfBounds"] = rejectedOutOfBounds
+            result["rejectedForeignDestination"] = rejectedForeignDestination
             result["valid"] = fullInspection["valid"] as? Bool == true && partialInspection["valid"] as? Bool == true &&
-                unchanged && rejectedUninitializedPartial && rejectedOutOfBounds
+                unchanged && rejectedUninitializedPartial && rejectedOutOfBounds && rejectedForeignDestination
         } catch {
             result["valid"] = false
             result["error"] = String(describing: error)
