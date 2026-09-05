@@ -1135,7 +1135,25 @@ int main(int argc, const char *argv[]) {
               NSMutableDictionary *statuses = [NSMutableDictionary dictionary];
               for (NSString *key in properties)
                 statuses[key] = @(set(session,(__bridge CFStringRef)key,(__bridge CFTypeRef)properties[key]));
+              NSDictionary *hdrProperties = LumenTileOutputProbe.hdrProperties;
+              for (NSString *key in hdrProperties)
+                statuses[key] = @(set(session,(__bridge CFStringRef)key,(__bridge CFTypeRef)hdrProperties[key]));
               tileSession[@"encodePropertyStatuses"] = statuses;
+              typedef OSStatus (*TileSupported)(CFTypeRef, CFDictionaryRef *);
+              TileSupported supported = (TileSupported)dlsym(RTLD_DEFAULT,"VTTileCompressionSessionCopySupportedPropertyDictionary");
+              CFDictionaryRef all = NULL;
+              OSStatus supportedStatus = supported ? supported(session,&all) : -12900;
+              NSMutableDictionary *rateProperties = [NSMutableDictionary dictionary];
+              for (NSString *key in (__bridge NSDictionary *)all)
+                if ([key localizedCaseInsensitiveContainsString:@"rate"] ||
+                    [key localizedCaseInsensitiveContainsString:@"vbv"] ||
+                    [key localizedCaseInsensitiveContainsString:@"buffer"] ||
+                    [key localizedCaseInsensitiveContainsString:@"metadata"] ||
+                    [key isEqualToString:@"MasteringDisplayColorVolume"] || [key isEqualToString:@"ContentLightLevelInfo"])
+                  rateProperties[key] = ((__bridge NSDictionary *)all)[key];
+              tileSession[@"supportedPropertyStatus"] = @(supportedStatus);
+              tileSession[@"rateProperties"] = rateProperties;
+              if (all) CFRelease(all);
             }
             if (LumenProbeHasFlag(argc, argv, @"--prepare-tile-session") || encodeTiles) {
               // The wrapper forwards x1 unchanged to the encoder and optionally

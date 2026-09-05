@@ -258,6 +258,12 @@ public final class LumenTileOutputProbe: NSObject {
     private let continuation: AsyncStream<LumenTileProbeSample>.Continuation
     private let result: Task<String, Never>
 
+    @objc public static var hdrProperties: NSDictionary {
+        [kVTCompressionPropertyKey_HDRMetadataInsertionMode as String: kVTHDRMetadataInsertionMode_Auto,
+         kVTCompressionPropertyKey_MasteringDisplayColorVolume as String: LumenVideoHDRDisplayMetadata.hdr10Default().encodedData,
+         kVTCompressionPropertyKey_ContentLightLevelInfo as String: LumenVideoContentLightLevelInfo.hdr10Default().encodedData] as NSDictionary
+    }
+
     @objc public override init() {
         let (stream, continuation) = AsyncStream<LumenTileProbeSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
         self.continuation = continuation
