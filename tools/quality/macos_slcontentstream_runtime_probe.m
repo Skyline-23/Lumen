@@ -1964,6 +1964,19 @@ int main(int argc, const char *argv[]) {
     if (inspectNativeColor) {
       NSString *requestedMatrix=[nativeColorMatrix isEqualToString:@"709"]?(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2:
         ([nativeColorMatrix isEqualToString:@"601"]?(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_601_4:(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_2020);
+      // Compare the actual exported CG key values, not their historical SDK
+      // comment claiming equivalence with CoreVideo strings.
+      NSMutableDictionary *constantValues=[NSMutableDictionary dictionary];
+      for (NSString *name in @[@"kCGDisplayStreamYCbCrMatrix_ITU_R_709_2",@"kCGDisplayStreamYCbCrMatrix_ITU_R_601_4"]) {
+        const CFStringRef *storage=(const CFStringRef *)dlsym(RTLD_DEFAULT,name.UTF8String);
+        if (storage && *storage) constantValues[name]=(__bridge NSString *)*storage;
+      }
+      LumenProbePrintJSON(@{@"mode":@"native-matrix-constant-values",@"cgConstants":constantValues,
+        @"coreVideo709":(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2});
+      if ([nativeColorMatrix isEqualToString:@"709"]) {
+        requestedMatrix=constantValues[@"kCGDisplayStreamYCbCrMatrix_ITU_R_709_2"];
+        if (!requestedMatrix) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"cg709constant-unavailable"});return 22; }
+      }
       return LumenProbeNativeColor(displayID,callbackQueue,requestedMatrix);
     }
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
