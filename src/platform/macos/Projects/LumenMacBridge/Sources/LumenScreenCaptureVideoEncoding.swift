@@ -121,7 +121,59 @@ extension LumenScreenCaptureVideoRuntime {
         height: Int
     ) throws -> VTCompressionSession {
         var session: VTCompressionSession?
-        let status = VTCompressionSessionCreate(
+        let status: OSStatus
+#if DEBUG
+        if ProcessInfo.processInfo.environment["LUMEN_ENCODER_EXECUTION"] == "client-process" {
+            // macOS 27's public entry point forwards the same arguments to
+            // CreateWithOptions, inserting options immediately before outSession.
+            // This diagnostic requests client-process encoding; success alone
+            // does not prove VT selected it. Verify the runtime call stack.
+            typealias CreateWithOptions = @convention(c) (
+                CFAllocator?, Int32, Int32, CMVideoCodecType,
+                CFDictionary?, CFDictionary?, CFAllocator?,
+                VTCompressionOutputCallback?, UnsafeMutableRawPointer?,
+                CFDictionary?, UnsafeMutablePointer<VTCompressionSession?>
+            ) -> OSStatus
+            guard let library = dlopen(
+                "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+                RTLD_NOW | RTLD_LOCAL
+            ) else {
+                throw LumenExactCaptureError.invalidFormat("VideoToolbox library unavailable")
+            }
+            defer { dlclose(library) }
+            guard let symbol = dlsym(library, "VTCompressionSessionCreateWithOptions"),
+                  let optionSymbol = dlsym(library, "kVTCompressionSessionOption_AllowClientProcessEncode") else {
+                throw LumenExactCaptureError.invalidFormat("client-process encode option unavailable")
+            }
+            let option = optionSymbol.assumingMemoryBound(to: CFString.self).pointee
+            let create = unsafeBitCast(symbol, to: CreateWithOptions.self)
+            status = create(
+                kCFAllocatorDefault, Int32(width), Int32(height), compressionCodecType,
+                [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary,
+                [kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
+                 kCVPixelBufferPixelFormatTypeKey: capturePixelFormat,
+                 kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
+                nil, lumenScreenCaptureCompressionOutputCallback,
+                Unmanaged.passUnretained(self).toOpaque(),
+                [option: true] as CFDictionary, &session
+            )
+            Self.startupLogger.notice("stage=encoder-client-process-requested create-status=\(status, privacy: .public)")
+        } else {
+            status = createDefaultCompressionSession(width: width, height: height, session: &session)
+        }
+#else
+        status = createDefaultCompressionSession(width: width, height: height, session: &session)
+#endif
+        guard status == noErr, let session else {
+            throw LumenScreenCaptureError.compressionSessionCreationFailed(status)
+        }
+        return session
+    }
+
+    private func createDefaultCompressionSession(
+        width: Int, height: Int, session: inout VTCompressionSession?
+    ) -> OSStatus {
+        VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: Int32(width),
             height: Int32(height),
@@ -140,10 +192,6 @@ extension LumenScreenCaptureVideoRuntime {
             refcon: Unmanaged.passUnretained(self).toOpaque(),
             compressionSessionOut: &session
         )
-        guard status == noErr, let session else {
-            throw LumenScreenCaptureError.compressionSessionCreationFailed(status)
-        }
-        return session
     }
 
     var compressionCodecType: CMVideoCodecType {
