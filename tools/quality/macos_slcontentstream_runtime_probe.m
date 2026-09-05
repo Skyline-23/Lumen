@@ -1658,6 +1658,12 @@ int main(int argc, const char *argv[]) {
         pixelFormatError =
           @"BGRA is an 8-bit SDR format; omit --hdr for this selector.";
       }
+    } else if ([pixelFormatSelection isEqualToString:@"l10r"]) {
+      // CoreGraphics explicitly documents this packed 10-bit RGB source
+      // format. Source-only screening, never implicit VT input conversion.
+      pixelFormat = kCVPixelFormatType_ARGB2101010LEPacked;
+      colorSpace = (__bridge NSString *)kCGColorSpaceITUR_2100_PQ;
+      if (!hdr || !inspectDamage) pixelFormatError = @"l10r requires HDR owned-source damage inspection.";
     } else if ([pixelFormatSelection isEqualToString:@"420v"]) {
       pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
       matrix = (__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2;
@@ -1675,7 +1681,7 @@ int main(int argc, const char *argv[]) {
       }
     } else {
       pixelFormatError =
-        @"--pixel-format must be one of: bgra, 420v, x420.";
+        @"--pixel-format must be one of: bgra, 420v, x420, l10r (HDR source inspection only).";
     }
 
     if (pixelFormatError != nil) {
@@ -2070,6 +2076,7 @@ int main(int argc, const char *argv[]) {
       @"surfaceWidth": @(surfaceWidth),
       @"surfaceHeight": @(surfaceHeight),
       @"surfacePixelFormat": LumenProbeFourCC(surfacePixelFormat),
+      @"sourcePixelFormatMatchesRequest": @(surfacePixelFormat == pixelFormat),
       @"surfaceHasIOSurface": @(hasIOSurface),
       @"callbackFPS": @(callbackFPS),
       @"displayDeltaP50Milliseconds": @(
@@ -2102,6 +2109,7 @@ int main(int argc, const char *argv[]) {
       [encoderMetrics[@"encoderHDRTransferValid"] boolValue] &&
       [encoderMetrics[@"freshHardwareDecodeStatus"] intValue] == 0 &&
       [encoderMetrics[@"freshHardwareDecodedFrames"] intValue] == 3);
-    return firstFrameWait == 0 && wrapFailureCount == 0 && encoderPassed && damagePassed ? 0 : 5;
+    return firstFrameWait == 0 && wrapFailureCount == 0 && encoderPassed && damagePassed &&
+      (!inspectDamage || (surfaceWidth == outputWidth && surfaceHeight == outputHeight && surfacePixelFormat == pixelFormat)) ? 0 : 5;
   }
 }
