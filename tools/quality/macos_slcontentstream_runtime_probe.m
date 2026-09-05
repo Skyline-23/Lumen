@@ -1151,7 +1151,7 @@ static NSString *LumenProbeValidateRGB10Conversion(CVPixelBufferRef source, CVPi
 // This static patch diagnostic runs only on the harness-owned virtual display.
 // C callbacks sample bounded scalar values while their source buffer is valid;
 // all cross-callback analysis belongs to LumenNativeColorProbe's Swift actor.
-static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue) {
+static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue, NSString *requestedMatrix) {
   NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
   if (!screen || !LumenProbeOwnedDisplay || LumenProbeOwnedDisplay.displayID != displayID ||
       CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
@@ -1201,12 +1201,15 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   // These counters are isolated to the existing serial C callback queue. Main
   // reads them only after stop and a queue barrier; no new coordination queue.
   __block NSUInteger sampleCount=0;
+  // Exclude stream activation and color-pipeline settling. Only this serial
+  // callback queue updates the sampling epoch, after both streams have started.
+  __block uint64_t samplingStart=UINT64_MAX;
   BOOL started=YES; NSString *startFailure=@"";
   for (NSUInteger kind=0; kind<2; kind++) {
     BOOL rgb=kind==0;
     OSType format=rgb?kCVPixelFormatType_ARGB2101010LEPacked:kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
     LumenMacSkyLightDisplayStreamFrameHandler handler=^(CGDisplayStreamFrameStatus status,uint64_t time,CVPixelBufferRef buffer,CVReturn wrapped) {
-      if (status != kCGDisplayStreamFrameStatusFrameComplete) return;
+      if (status != kCGDisplayStreamFrameStatusFrameComplete || clock_gettime_nsec_np(CLOCK_UPTIME_RAW)<samplingStart) return;
       sampleCount++;
       BOOL valid=wrapped==0 && buffer && CVPixelBufferGetWidth(buffer)==3840 && CVPixelBufferGetHeight(buffer)==2160 &&
         CVPixelBufferGetPixelFormatType(buffer)==format && CVPixelBufferGetPlaneCount(buffer)==(rgb?0:2);
@@ -1248,13 +1251,16 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
     };
     LumenMacSkyLightDisplayStream *stream=[[LumenMacSkyLightDisplayStream alloc]
       initWithDisplayID:displayID outputWidth:3840 outputHeight:2160 pixelFormat:format minimumFrameTime:0
-      queueDepth:2 showCursor:NO yCbCrMatrix:kCVImageBufferYCbCrMatrix_ITU_R_2020 dynamicRangeMode:2
-      colorSpaceName:kCGColorSpaceITUR_2100_PQ callbackQueue:callbackQueue frameHandler:handler];
+      queueDepth:2 showCursor:NO yCbCrMatrix:requestedMatrix dynamicRangeMode:2
+      colorSpaceName:(__bridge NSString *)kCGColorSpaceITUR_2100_PQ callbackQueue:callbackQueue frameHandler:handler];
     NSError *error=nil;
     if (!stream || ![stream startWithError:&error]) { started=NO;startFailure=error.localizedDescription?:@"native-color-stream-create";break; }
     [streams addObject:stream];
   }
-  if (started) LumenProbeRunApplicationForDuration(3);
+  if (started) {
+    dispatch_sync(callbackQueue,^{ samplingStart=clock_gettime_nsec_np(CLOCK_UPTIME_RAW)+NSEC_PER_SEC; });
+    LumenProbeRunApplicationForDuration(4);
+  }
   NSMutableArray *stops=[NSMutableArray array];
   for (LumenMacSkyLightDisplayStream *stream in streams) [stops addObject:@([stream stop])];
   dispatch_sync(callbackQueue,^{});
@@ -1270,7 +1276,10 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   result[@"streamStartSuccess"]=@(started);result[@"startFailure"]=startFailure;result[@"stopStatuses"]=stops;
   result[@"displayID"]=@(displayID);result[@"width"]=@3840;result[@"height"]=@2160;
   result[@"requestedGrayPQ"]=@[@0,@.5,@.65,@.75,@.9];
+  result[@"requestedMatrix"]=requestedMatrix;
   result[@"screenEDRHeadroom"]=@(screen.maximumExtendedDynamicRangeColorComponentValue);
+  result[@"screenPotentialEDRHeadroom"]=@(screen.maximumPotentialExtendedDynamicRangeColorComponentValue);
+  result[@"screenReferenceEDRHeadroom"]=@(screen.maximumReferenceExtendedDynamicRangeColorComponentValue);
   LumenProbePrintJSON(result);
   return [result[@"valid"] boolValue]?0:22;
 }
@@ -1691,6 +1700,10 @@ int main(int argc, const char *argv[]) {
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
     BOOL inspectNativeColor = LumenProbeHasFlag(argc,argv,@"--inspect-native-color");
+    NSString *nativeColorMatrix=LumenProbeArgument(argc,argv,@"--native-color-matrix");
+    if (nativeColorMatrix && (!inspectNativeColor || ![@[@"601",@"709",@"2020"] containsObject:nativeColorMatrix])) {
+      LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-matrix-requires-color-probe-and-601-709-or-2020"}); return 22;
+    }
     if (inspectNativeColor && (!LumenProbeHasFlag(argc,argv,@"--virtual-display") || !hdr ||
         outputWidth != 3840 || outputHeight != 2160 || useSCK || replayCompare || stimulus || inspectDamage ||
         LumenProbeHasFlag(argc,argv,@"--pipeline") || LumenProbeArgument(argc,argv,@"--encoder-mode") ||
@@ -1948,7 +1961,11 @@ int main(int argc, const char *argv[]) {
       "dev.skyline23.lumen.slcontentstream-probe.callback",
       DISPATCH_QUEUE_SERIAL
     );
-    if (inspectNativeColor) return LumenProbeNativeColor(displayID,callbackQueue);
+    if (inspectNativeColor) {
+      NSString *requestedMatrix=[nativeColorMatrix isEqualToString:@"709"]?(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_709_2:
+        ([nativeColorMatrix isEqualToString:@"601"]?(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_601_4:(__bridge NSString *)kCVImageBufferYCbCrMatrix_ITU_R_2020);
+      return LumenProbeNativeColor(displayID,callbackQueue,requestedMatrix);
+    }
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
     NSString *encoderMode = LumenProbeArgument(argc,argv,@"--encoder-mode");
     if (replayCompare && (encoderMode || pixelFormat == kCVPixelFormatType_32BGRA)) return 13;

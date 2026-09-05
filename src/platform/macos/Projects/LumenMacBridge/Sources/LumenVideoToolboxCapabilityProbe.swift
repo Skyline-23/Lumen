@@ -91,6 +91,21 @@ private actor LumenNativeColorCollector {
                 }
             }
             let maximumError = zip(predicted, p010.codes).map { abs($0 - $1) }.max() ?? 1024
+            var matrixErrors: [String: Double] = [:]
+            for (name, kr, kb) in [("bt601", 0.299, 0.114), ("bt709", 0.2126, 0.0722), ("bt2020", 0.2627, 0.0593)] {
+                var error = 0.0
+                for index in 0 ..< 8 {
+                    let r = rgb.codes[index * 3] / 1023, g = rgb.codes[index * 3 + 1] / 1023
+                    let b = rgb.codes[index * 3 + 2] / 1023
+                    let y = kr * r + (1 - kr - kb) * g + kb * b
+                    let expected = [64 + 876 * y, 512 + 896 * (b - y) / (2 * (1 - kb)),
+                                    512 + 896 * (r - y) / (2 * (1 - kr))]
+                    for component in 0 ..< 3 {
+                        error = max(error, abs(expected[component] - p010.codes[index * 3 + component]))
+                    }
+                }
+                matrixErrors[name] = error
+            }
             let tagsValid = rgb.transfer == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String &&
                 p010.transfer == rgb.transfer && rgb.primaries == kCVImageBufferColorPrimaries_ITU_R_2020 as String &&
                 p010.primaries == rgb.primaries && p010.matrix == kCVImageBufferYCbCrMatrix_ITU_R_2020 as String
@@ -99,13 +114,17 @@ private actor LumenNativeColorCollector {
             result["nativeP010PatchCodes"] = p010.codes
             result["predictedP010PatchCodes"] = predicted
             result["maximumMatrixErrorCodes"] = maximumError
+            result["matrixCandidateMaximumErrors"] = matrixErrors
             result["grayNitsAssumingPQ"] = nits
             result["distinctGrayLevelsAboveSDR"] = grayscaleOrdered && nits[3] > 203 && nits[4] > nits[3] + 50
             result["tagsValid"] = tagsValid
             result["rgbTransfer"] = rgb.transfer; result["rgbPrimaries"] = rgb.primaries
             result["p010Transfer"] = p010.transfer; result["p010Matrix"] = p010.matrix
+            // The raw adapter creates an untagged CVPixelBuffer around the
+            // IOSurface; labels alone neither prove nor disprove pixel semantics.
+            result["samplingValid"] = count == expectedSamples && invalid == 0 && maximumSpread <= 2 && maximumTemporalDelta <= 2
             result["valid"] = count == expectedSamples && invalid == 0 && maximumSpread <= 2 &&
-                maximumTemporalDelta <= 2 && maximumError <= 4 && tagsValid && grayscaleOrdered &&
+                maximumTemporalDelta <= 2 && maximumError <= 4 && grayscaleOrdered &&
                 nits[3] > 203 && nits[4] > nits[3] + 50
         }
         guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
