@@ -247,25 +247,16 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
         while offset < total {
             guard total - offset >= prefixBytes,
                   CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: prefixBytes,
-                                            destination: &header) == noErr else {
-                invalidHEVCAccessUnits += 1
-                return
-            }
+                                            destination: &header) == noErr else { break }
             let length = header.prefix(prefixBytes).reduce(0) { ($0 << 8) | Int($1) }
             offset += prefixBytes
             guard length >= 2, length <= total - offset,
                   CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: min(length, 3),
                                             destination: &header) == noErr,
-                  header[0] & 0x80 == 0, header[1] & 0x07 != 0 else {
-                invalidHEVCAccessUnits += 1
-                return
-            }
+                  header[0] & 0x80 == 0, header[1] & 0x07 != 0 else { break }
             let type = (header[0] >> 1) & 0x3f
             if type <= 31 {
-                guard length >= 3 else {
-                    invalidHEVCAccessUnits += 1
-                    return
-                }
+                guard length >= 3 else { break }
                 vclCount += 1
                 if header[2] & 0x80 != 0 { firstSlices += 1 }
             }
