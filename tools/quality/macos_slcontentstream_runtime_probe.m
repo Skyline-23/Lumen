@@ -1012,6 +1012,7 @@ int main(int argc, const char *argv[]) {
     if (compareRawSourceLoad && (!productionReplay || !stimulus || useSCK ||
         LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
         LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-source-cadence") ||
         LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
       LumenProbePrintJSON(@{@"error":@"raw-source-load-requires-private-stimulated-production-replay"});
       return 13;
@@ -1314,6 +1315,7 @@ int main(int argc, const char *argv[]) {
           comparePeriodic:LumenProbeHasFlag(argc,argv,@"--compare-periodic")
           compareOverlap:LumenProbeHasFlag(argc,argv,@"--compare-overlap")
           compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load")
+          compareSourceCadence:LumenProbeHasFlag(argc,argv,@"--compare-source-cadence")
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];

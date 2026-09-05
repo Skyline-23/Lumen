@@ -9,10 +9,11 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
+        compareSourceCadence: Bool,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
     ) {
@@ -56,6 +57,16 @@ public final class LumenEncoderReplayProbe: NSObject {
                 ]
                 let data = try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)
                 completion(String(decoding: data ?? Data("{\"error\":\"result-encoding-failed\"}".utf8), as: UTF8.self))
+            } else if compareSourceCadence {
+                var results: [String] = []
+                for sourceFrameRate in [120, 60, 120] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        sourceFrameRate: sourceFrameRate
+                    ))
+                }
+                completion("{\"mode\":\"production-source-cadence-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
             } else if compareDecoderLoad {
                 var results: [String] = []
                 for enabled in [false, true, false] {
@@ -243,7 +254,8 @@ private actor LumenEncoderReplayRunner {
 
     func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
              hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int,
-             overlapEnabled: Bool = true, decoderLoad: Bool = false) async -> String {
+             overlapEnabled: Bool = true, decoderLoad: Bool = false,
+             sourceFrameRate: Int = 120) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
             .makeStream(bufferingPolicy: .bufferingOldest(4))
@@ -315,14 +327,16 @@ private actor LumenEncoderReplayRunner {
             let start = clock.now
             var offered = 0
             var skippedProducerDeadlines = 0
-            let total = Int(duration * 120)
+            // Supply cadence is diagnostic input, not negotiated frame rate:
+            // the product configuration above stays at 120 Hz in every run.
+            let total = Int(duration * Double(sourceFrameRate))
             while offered < total {
-                let deadline = start.advanced(by: .nanoseconds(Int64(offered) * 1_000_000_000 / 120))
+                let deadline = start.advanced(by: .nanoseconds(Int64(offered) * 1_000_000_000 / Int64(sourceFrameRate)))
                 try await clock.sleep(until: deadline)
                 // Do not burst old attempts after a producer scheduling stall.
                 let elapsed = start.duration(to: clock.now)
                 let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-                let due = min(Int(seconds * 120), total - 1)
+                let due = min(Int(seconds * Double(sourceFrameRate)), total - 1)
                 if due > offered + 1 {
                     skippedProducerDeadlines += due - offered
                     offered = due
@@ -333,7 +347,7 @@ private actor LumenEncoderReplayRunner {
                     runtime.queue.async {
                         let source = runtime.makePendingSource(
                             imageBuffer: fixture.buffers[index % fixture.buffers.count],
-                            presentationTime: CMTime(value: Int64(index), timescale: 120),
+                            presentationTime: CMTime(value: Int64(index), timescale: Int32(sourceFrameRate)),
                             sourceDisplayTime: displayTime
                         )
                         runtime.admitPendingSource(source)
@@ -341,7 +355,7 @@ private actor LumenEncoderReplayRunner {
                     }
                 }
                 offered += 1
-                if offered % (120 * periodicSeconds) == 0 { _ = await runtime.requestPeriodicKeyFrame() }
+                if offered % (sourceFrameRate * periodicSeconds) == 0 { _ = await runtime.requestPeriodicKeyFrame() }
             }
             await runtime.stop()
             let elapsed = start.duration(to: clock.now)
@@ -356,6 +370,7 @@ private actor LumenEncoderReplayRunner {
                 }
                 return [
                     "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
+                    "sourceFrameRate": sourceFrameRate, "negotiatedFrameRate": 120,
                     "overlapEnabled": overlapEnabled,
                     "decoderLoad": decoderLoad, "decoder": decodeResult,
                     "decodeInputDrops": metrics.decodeInputDrops,
