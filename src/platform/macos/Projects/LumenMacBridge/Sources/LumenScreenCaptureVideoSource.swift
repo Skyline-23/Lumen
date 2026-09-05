@@ -335,10 +335,8 @@ extension LumenScreenCaptureVideoRuntime {
         applySkyLightSourceColorAttachments(to: pixelBuffer)
         recordSourceTiming(callbackEntryMachTime)
 #if DEBUG
-        if recordsLiveSourceArrivals, liveSourceArrivalOffsets.count < 768 {
-            if liveSourceArrivalWarmup > 0 {
-                liveSourceArrivalWarmup -= 1
-            } else {
+        if recordsLiveSourceArrivals, liveSourceArrivalOffsets.count < 768,
+           liveSourceSlowWindows >= 3 {
                 let origin = liveSourceArrivalOrigin ?? callbackEntryMachTime
                 liveSourceArrivalOrigin = origin
                 liveSourceArrivalOffsets.append(UInt64(
@@ -355,7 +353,6 @@ extension LumenScreenCaptureVideoRuntime {
                         )
                     }
                 }
-            }
         }
 #endif
 

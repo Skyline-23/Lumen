@@ -221,6 +221,22 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func logCompactPipelineTiming() {
+#if DEBUG
+        if recordsLiveSourceArrivals, liveSourceArrivalOffsets.count < 768 {
+            // Diagnostic selection only: do not change production admission.
+            // Sample the observed slow-output state, not a startup timer that
+            // can accidentally select the faster state. Reject interrupted runs.
+            if let source = captureCadenceTelemetry.sourceCallbacksPerSecond,
+               let output = captureCadenceTelemetry.videoToolboxOutputsPerSecond,
+               source >= 50, (30 ..< 50).contains(output) {
+                liveSourceSlowWindows = min(liveSourceSlowWindows + 1, 3)
+            } else {
+                liveSourceSlowWindows = 0
+                liveSourceArrivalOrigin = nil
+                liveSourceArrivalOffsets.removeAll(keepingCapacity: true)
+            }
+        }
+#endif
         let sourceFrameRate = formattedRate(
             captureCadenceTelemetry.sourceCallbacksPerSecond
         )
