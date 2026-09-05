@@ -152,6 +152,10 @@ extension LumenScreenCaptureVideoRuntime {
         )
         queue.sync {
             releaseSkyLightMetalStaging()
+            if let interactiveCaptureActivity {
+                ProcessInfo.processInfo.endActivity(interactiveCaptureActivity)
+                self.interactiveCaptureActivity = nil
+            }
         }
     }
 
