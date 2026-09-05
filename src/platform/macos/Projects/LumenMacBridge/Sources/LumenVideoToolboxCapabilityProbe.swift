@@ -292,6 +292,17 @@ private actor LumenTileOutputCollector {
                 continue
             }
             let dimensions = CMVideoFormatDescriptionGetDimensions(format)
+            var parameterSets: [String] = []
+            for index in 0 ... 2 {
+                var pointer: UnsafePointer<UInt8>?
+                var length = 0
+                if CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: index,
+                    parameterSetPointerOut: &pointer, parameterSetSizeOut: &length,
+                    parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil) == noErr,
+                   let pointer, length > 0, length < 4096 {
+                    parameterSets.append(Data(bytes: pointer, count: length).base64EncodedString())
+                }
+            }
             var headerLength: Int32 = 0
             let headerStatus = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format,
                 parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil,
@@ -324,6 +335,8 @@ private actor LumenTileOutputCollector {
             rows.append(["status": output.status, "flags": output.flags, "bytes": size,
                 "origin": [output.x, output.y], "tileSize": [output.width, output.height],
                 "formatSize": [dimensions.width, dimensions.height], "nalTypes": nalTypes,
+                "parameterSets": parameterSets,
+                "formatExtensionKeys": (CMFormatDescriptionGetExtensions(format) as? [String: Any])?.keys.sorted() ?? [],
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
                 "durationValid": sample.duration.isValid])
             if case .dropped = continuation.yield(.init(value: sample, acknowledgeAfterDecode: false)) { valid = false }
