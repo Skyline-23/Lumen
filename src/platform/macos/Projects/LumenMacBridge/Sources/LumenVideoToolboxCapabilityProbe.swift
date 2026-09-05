@@ -128,7 +128,8 @@ public final class LumenEncoderReplayProbe: NSObject {
                         decoderLoad: enabled && start["combinedLoad"] as? Bool == true,
                         sourceFrameRate: start["sourceFrameRate"] as? Int ?? 120,
                         metalStaging: start["combinedLoad"] as? Bool == true ? enabled : nil,
-                        forwarderRetention: enabled && start["combinedLoad"] as? Bool == true
+                        forwarderRetention: start["liveDisplayID"] != nil || (enabled && start["combinedLoad"] as? Bool == true),
+                        liveDisplayID: (start["liveDisplayID"] as? NSNumber)?.uint32Value
                     )
                     let sourceResult = sourceLoadController(false)
                     guard var row = (try? JSONSerialization.jsonObject(
@@ -141,7 +142,9 @@ public final class LumenEncoderReplayProbe: NSObject {
                     row["combinedLoadComparison"] = start["combinedLoad"] as? Bool == true
                     row["rawSourceMetrics"] = sourceResult
                     row["rawSourceValid"] = sourceResult["success"] as? Bool == true
-                        && (!enabled || (sourceResult["completeFrames"] as? Int ?? 0) > 0)
+                        && (start["liveDisplayID"] != nil
+                            ? (row["actualSourceFrames"] as? Int ?? 0) > 0
+                            : (!enabled || (sourceResult["completeFrames"] as? Int ?? 0) > 0))
                     results.append(row)
                 }
                 let result: [String: Any] = [
@@ -353,7 +356,8 @@ private actor LumenEncoderReplayRunner {
              arrivalPeriod: Int64 = 0, arrivalKind: String = "constant",
              metalStaging: Bool? = nil, forwarderRetention: Bool = false,
              initialBitrateForUpdate: Int? = nil,
-             presentationPattern: [Int64]? = nil) async -> String {
+             presentationPattern: [Int64]? = nil,
+             liveDisplayID: UInt32? = nil) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let forwarder = forwarderRetention ? LumenVideoCaptureForwarder() : nil
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
@@ -365,7 +369,7 @@ private actor LumenEncoderReplayRunner {
         } : nil
         do {
             let configuration = LumenMacCaptureConfiguration(
-                displayID: 0, codec: .hevc,
+                displayID: liveDisplayID ?? 0, codec: .hevc,
                 videoProfile: hdr ? .hevcMain10 : .hevcMain,
                 chromaSubsampling: .yuv420, bitDepth: hdr ? 10 : 8,
                 dynamicRange: hdr ? .hdr10 : .sdr,
@@ -400,8 +404,12 @@ private actor LumenEncoderReplayRunner {
                 statisticsHandler: { _ in }, terminationHandler: { _ in }
             )
             self.runtime = runtime
-            _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
-            if metalStaging == true {
+            if liveDisplayID != nil {
+                try await runtime.start()
+            } else {
+                _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
+            }
+            if metalStaging == true, liveDisplayID == nil {
                 try runtime.prepareSkyLightMetalStaging(
                     width: width, height: height,
                     pixelFormat: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
@@ -454,7 +462,13 @@ private actor LumenEncoderReplayRunner {
             // Supply cadence is diagnostic input, not negotiated frame rate:
             // the product configuration above stays at 120 Hz in every run.
             var schedule: [Int64] = []
-            if let arrivalPattern {
+            if liveDisplayID != nil {
+                // Only the periodic-control timer runs here. Source callbacks
+                // and their original timestamps come from the real runtime.
+                schedule = (1 ... Int(ceil(duration))).map {
+                    Int64(min(Double($0), duration) * 1e9)
+                }
+            } else if let arrivalPattern {
                 var cycle: Int64 = 0
                 let limit = Int64(duration * 1e9)
                 if presentationPattern != nil {
@@ -498,7 +512,7 @@ private actor LumenEncoderReplayRunner {
                     didApplyRateUpdate = true
                 }
                 let displayTime = mach_absolute_time()
-                await withCheckedContinuation { continuation in
+                if liveDisplayID == nil { await withCheckedContinuation { continuation in
                     runtime.queue.async {
                         if metalStaging == true {
                             runtime.processSkyLightFrame(
@@ -519,7 +533,7 @@ private actor LumenEncoderReplayRunner {
                         runtime.admitPendingSource(source)
                         continuation.resume()
                     }
-                }
+                } }
                 offered += 1
                 if offered < total && schedule[offered] >= nextKeyFrameNanos {
                     _ = await runtime.requestPeriodicKeyFrame()
@@ -545,8 +559,11 @@ private actor LumenEncoderReplayRunner {
                 }
                 let settledSeconds = max(0, seconds - Double(settledStart - startUptimeNanos) / 1e9)
                 return [
-                    "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
-                    "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
+                    "mode": liveDisplayID == nil ? "production-encoder-immutable-replay" : "production-live-source",
+                    "periodicSeconds": periodicSeconds,
+                    "actualSourceFrames": runtime.statistics.sourceFrameCount,
+                    "sourceFrameRate": liveDisplayID != nil ? Double(runtime.statistics.sourceFrameCount) / seconds
+                        : arrivalPattern == nil ? Double(sourceFrameRate)
                         : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
                     "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
                     "presentationKind": presentationPattern == nil || presentationPattern == arrivalPattern
@@ -568,7 +585,7 @@ private actor LumenEncoderReplayRunner {
                         forwarder!.snapshot().queuedFrameCount == 0 &&
                         forwarder!.snapshot().hasLastSampleBuffer
                     ),
-                    "metalStaging": metalStaging == true,
+                    "metalStaging": metalStaging == true || liveDisplayID != nil,
                     "metalSubmitted": runtime.skyLightMetalStageSubmissionCount,
                     "metalCompleted": runtime.skyLightMetalStageCompletionCount,
                     "metalBusyDrops": runtime.skyLightMetalStageBusyDropCount,
@@ -576,7 +593,7 @@ private actor LumenEncoderReplayRunner {
                     "metalTextureFailures": runtime.skyLightMetalStageTextureFailureCount,
                     "metalCommandFailures": runtime.skyLightMetalStageCommandBufferFailureCount,
                     "metalValidationFailures": runtime.skyLightMetalStageValidationFailureCount,
-                    "metalValid": metalStaging != true || (
+                    "metalValid": (metalStaging != true && liveDisplayID == nil) || (
                         runtime.skyLightMetalStageSubmissionCount > 0 &&
                         runtime.skyLightMetalStageSubmissionCount == runtime.skyLightMetalStageCompletionCount &&
                         runtime.skyLightMetalStageBusyDropCount == 0 &&
@@ -595,7 +612,8 @@ private actor LumenEncoderReplayRunner {
                         decodeResult["decoded"] == metrics.latencies.count
                     ),
                     "outputFPS": Double(metrics.latencies.count) / seconds,
-                    "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
+                    "outputFrames": metrics.latencies.count,
+                    "offeredFrames": liveDisplayID != nil ? Int(runtime.statistics.sourceFrameCount) : offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
                     "callbackP50Milliseconds": percentile(metrics.latencies, 0.5),
                     "callbackP95Milliseconds": percentile(metrics.latencies, 0.95),

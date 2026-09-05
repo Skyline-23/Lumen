@@ -1093,7 +1093,11 @@ int main(int argc, const char *argv[]) {
     BOOL compareForwarder = LumenProbeHasFlag(argc,argv,@"--compare-forwarder");
     NSString *initialBitrateArgument = LumenProbeArgument(argc,argv,@"--compare-initial-bitrate-kbps");
     int initialBitrateForUpdate = initialBitrateArgument.intValue;
-    BOOL compareCombinedLoad = LumenProbeHasFlag(argc,argv,@"--compare-combined-load");
+    BOOL compareLiveProducer = LumenProbeHasFlag(argc,argv,@"--compare-live-producer");
+    BOOL compareCombinedLoad = compareLiveProducer || LumenProbeHasFlag(argc,argv,@"--compare-combined-load");
+    if (compareLiveProducer && !LumenProbeHasFlag(argc,argv,@"--virtual-display")) {
+      LumenProbePrintJSON(@{@"error":@"live-producer-comparison-requires-owned-virtual-display"}); return 13;
+    }
     NSString *combinedSourceArgument = LumenProbeArgument(argc,argv,@"--combined-source-fps");
     int combinedSourceFPS = combinedSourceArgument ? combinedSourceArgument.intValue : 120;
     if (combinedSourceArgument && (!compareCombinedLoad || combinedSourceFPS < 1 || combinedSourceFPS > 120 ||
@@ -1511,6 +1515,11 @@ int main(int argc, const char *argv[]) {
         __block uint64_t loadStartCount = 0;
         __block uint64_t loadStartNanos = 0;
         NSDictionary *(^sourceLoadController)(BOOL) = compareRawSourceLoad ? ^NSDictionary *(BOOL enabled) {
+          if (compareLiveProducer) {
+            // The product runtime owns the single real source in every phase.
+            // No discard-only stream is started alongside it.
+            return @{@"success":@YES, @"combinedLoad":@YES, @"liveDisplayID":@(displayID)};
+          }
           if (enabled) {
             dispatch_sync(callbackQueue, ^{ loadStartCount = state.completeCount; });
             loadStartNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
