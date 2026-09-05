@@ -29,6 +29,7 @@
 @property(nonatomic) OSType surfacePixelFormat;
 @property(nonatomic) BOOL hasIOSurface;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *displayTimes;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *arrivalTimes;
 @end
 
 // Optional compositor-owned motion keeps source cadence comparable between
@@ -190,6 +191,7 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
   self = [super init];
   if (self != nil) {
     _displayTimes = [NSMutableArray array];
+    _arrivalTimes = [NSMutableArray array];
   }
   return self;
 }
@@ -1005,10 +1007,19 @@ int main(int argc, const char *argv[]) {
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
+    BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
     BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (compareSourceJitter && (!productionReplay || !stimulus || useSCK || compareRawSourceLoad ||
+        LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-source-cadence") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
+      LumenProbePrintJSON(@{@"error":@"source-jitter-requires-exclusive-private-stimulated-replay"});
+      return 13;
+    }
     if (compareRawSourceLoad && (!productionReplay || !stimulus || useSCK ||
         LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
         LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
@@ -1196,6 +1207,7 @@ int main(int argc, const char *argv[]) {
             state.surfacePixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
             state.hasIOSurface = CVPixelBufferGetIOSurface(pixelBuffer) != NULL;
             [state.displayTimes addObject:@(displayTime)];
+            if (compareSourceJitter) [state.arrivalTimes addObject:@(callbackNanos)];
             break;
           case kCGDisplayStreamFrameStatusFrameIdle:
             state.idleCount += 1;
@@ -1265,6 +1277,12 @@ int main(int argc, const char *argv[]) {
     }
 
     long firstFrameWait = LumenProbeWaitPumping(firstFrame) ? 0 : 1;
+    // Record arrivals after fixture copying is finished; CPU fixture construction
+    // must not manufacture jitter in the input trace under investigation.
+    if (firstFrameWait == 0 && compareSourceJitter) {
+      dispatch_sync(callbackQueue, ^{ [state.arrivalTimes removeAllObjects]; });
+      LumenProbeRunApplicationForDuration(10);
+    }
     if (firstFrameWait == 0 && !replayCompare) {
       if (stimulusWindow != nil) {
         LumenProbeRunApplicationForDuration(duration);
@@ -1316,6 +1334,7 @@ int main(int argc, const char *argv[]) {
           compareOverlap:LumenProbeHasFlag(argc,argv,@"--compare-overlap")
           compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load")
           compareSourceCadence:LumenProbeHasFlag(argc,argv,@"--compare-source-cadence")
+          sourceArrivalNanos:compareSourceJitter ? [state.arrivalTimes copy] : nil
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];

@@ -9,11 +9,12 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:sourceArrivalNanos:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
         compareSourceCadence: Bool,
+        sourceArrivalNanos: [NSNumber]?,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
     ) {
@@ -24,9 +25,34 @@ public final class LumenEncoderReplayProbe: NSObject {
         }
         let buffers = frames.map { $0 as! CVPixelBuffer }
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
+        let arrivals = sourceArrivalNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if let sourceLoadController {
+            if let arrivals {
+                guard arrivals.count >= 120, arrivals.count <= 10_000,
+                      zip(arrivals, arrivals.dropFirst()).allSatisfy({ $1 > $0 }),
+                      let first = arrivals.first, let last = arrivals.last,
+                      last - first >= 5_000_000_000 else {
+                    completion("{\"error\":\"source-arrival-trace-invalid\"}")
+                    return
+                }
+                let offsets = arrivals.map { $0 - first }
+                let intervals = zip(offsets, offsets.dropFirst()).map { $1 - $0 }.sorted()
+                let period = offsets.last! + intervals[intervals.count / 2]
+                let count = offsets.count
+                let uniform = (0 ..< count).map { Int64($0) * period / Int64(count) }
+                var results: [String] = []
+                for (kind, pattern) in [("uniform", uniform), ("measured", offsets), ("uniform", uniform)] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        arrivalPattern: pattern, arrivalPeriod: period, arrivalKind: kind
+                    ))
+                }
+                completion("{\"mode\":\"production-source-jitter-aba\",\"arrivalOffsetsNanos\":[" +
+                    offsets.map(String.init).joined(separator: ",") +
+                    "],\"arrivalPeriodNanos\":\(period),\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if let sourceLoadController {
                 var results: [[String: Any]] = []
                 for enabled in [false, true, false] {
                     let start = sourceLoadController(enabled)
@@ -255,7 +281,8 @@ private actor LumenEncoderReplayRunner {
     func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
              hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int,
              overlapEnabled: Bool = true, decoderLoad: Bool = false,
-             sourceFrameRate: Int = 120) async -> String {
+             sourceFrameRate: Int = 120, arrivalPattern: [Int64]? = nil,
+             arrivalPeriod: Int64 = 0, arrivalKind: String = "constant") async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
             .makeStream(bufferingPolicy: .bufferingOldest(4))
@@ -329,25 +356,41 @@ private actor LumenEncoderReplayRunner {
             var skippedProducerDeadlines = 0
             // Supply cadence is diagnostic input, not negotiated frame rate:
             // the product configuration above stays at 120 Hz in every run.
-            let total = Int(duration * Double(sourceFrameRate))
+            var schedule: [Int64] = []
+            if let arrivalPattern {
+                var cycle: Int64 = 0
+                let limit = Int64(duration * 1e9)
+                while cycle < limit {
+                    schedule.append(contentsOf: arrivalPattern.map { cycle + $0 }.filter { $0 < limit })
+                    cycle += arrivalPeriod
+                }
+            } else {
+                schedule = (0 ..< Int(duration * Double(sourceFrameRate))).map {
+                    Int64($0) * 1_000_000_000 / Int64(sourceFrameRate)
+                }
+            }
+            let total = schedule.count
+            var nextKeyFrameNanos = Int64(periodicSeconds) * 1_000_000_000
             while offered < total {
-                let deadline = start.advanced(by: .nanoseconds(Int64(offered) * 1_000_000_000 / Int64(sourceFrameRate)))
+                let deadline = start.advanced(by: .nanoseconds(schedule[offered]))
                 try await clock.sleep(until: deadline)
                 // Do not burst old attempts after a producer scheduling stall.
                 let elapsed = start.duration(to: clock.now)
                 let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-                let due = min(Int(seconds * Double(sourceFrameRate)), total - 1)
+                var due = offered
+                while due + 1 < total && schedule[due + 1] <= Int64(seconds * 1e9) { due += 1 }
                 if due > offered + 1 {
                     skippedProducerDeadlines += due - offered
                     offered = due
                 }
                 let index = offered
+                let presentationNanos = schedule[index]
                 let displayTime = mach_absolute_time()
                 await withCheckedContinuation { continuation in
                     runtime.queue.async {
                         let source = runtime.makePendingSource(
                             imageBuffer: fixture.buffers[index % fixture.buffers.count],
-                            presentationTime: CMTime(value: Int64(index), timescale: Int32(sourceFrameRate)),
+                            presentationTime: CMTime(value: presentationNanos, timescale: 1_000_000_000),
                             sourceDisplayTime: displayTime
                         )
                         runtime.admitPendingSource(source)
@@ -355,7 +398,11 @@ private actor LumenEncoderReplayRunner {
                     }
                 }
                 offered += 1
-                if offered % (sourceFrameRate * periodicSeconds) == 0 { _ = await runtime.requestPeriodicKeyFrame() }
+                if offered < total && schedule[offered] >= nextKeyFrameNanos {
+                    _ = await runtime.requestPeriodicKeyFrame()
+                    nextKeyFrameNanos = (schedule[offered] / (Int64(periodicSeconds) * 1_000_000_000) + 1)
+                        * Int64(periodicSeconds) * 1_000_000_000
+                }
             }
             await runtime.stop()
             let elapsed = start.duration(to: clock.now)
@@ -370,7 +417,9 @@ private actor LumenEncoderReplayRunner {
                 }
                 return [
                     "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
-                    "sourceFrameRate": sourceFrameRate, "negotiatedFrameRate": 120,
+                    "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
+                        : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
+                    "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
                     "overlapEnabled": overlapEnabled,
                     "decoderLoad": decoderLoad, "decoder": decodeResult,
                     "decodeInputDrops": metrics.decodeInputDrops,
