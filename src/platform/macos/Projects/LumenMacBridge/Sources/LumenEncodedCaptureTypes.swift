@@ -389,23 +389,35 @@ struct LumenCaptureStageTimingAccumulator: Equatable, Sendable {
 
 struct LumenCaptureIngressTimings: Equatable, Sendable {
     private var previousDisplayMachTime: UInt64?
+    private var previousCallbackMachTime: UInt64?
     private(set) var displayInterval = LumenCaptureStageTimingAccumulator()
     private(set) var displayToCallback = LumenCaptureStageTimingAccumulator()
+    private(set) var callbackInterval = LumenCaptureStageTimingAccumulator()
+    private(set) var scheduledDisplayLead = LumenCaptureStageTimingAccumulator()
 
     mutating func observe(
         displayedMachTime: UInt64?,
         callbackMachTime: UInt64
     ) {
-        guard let displayedMachTime,
-              displayedMachTime <= callbackMachTime else {
-            return
+        if let previousCallbackMachTime, callbackMachTime > previousCallbackMachTime {
+            callbackInterval.observe(LumenMachTime.milliseconds(
+                from: previousCallbackMachTime, to: callbackMachTime
+            ))
         }
-        displayToCallback.observe(
-            LumenMachTime.milliseconds(
-                from: displayedMachTime,
-                to: callbackMachTime
-            )
-        )
+        previousCallbackMachTime = callbackMachTime
+        guard let displayedMachTime else { return }
+        // CGDisplayStream reports when the frame was TO BE displayed, which
+        // can legitimately be after callback entry. Keep its cadence sample;
+        // report display lead separately instead of inventing negative latency.
+        if displayedMachTime <= callbackMachTime {
+            displayToCallback.observe(LumenMachTime.milliseconds(
+                from: displayedMachTime, to: callbackMachTime
+            ))
+        } else {
+            scheduledDisplayLead.observe(LumenMachTime.milliseconds(
+                from: callbackMachTime, to: displayedMachTime
+            ))
+        }
         guard let previousDisplayMachTime else {
             self.previousDisplayMachTime = displayedMachTime
             return
@@ -434,7 +446,39 @@ struct LumenCaptureIngressTimings: Equatable, Sendable {
             prefix: "sourceDisplayToCallback",
             timing: displayToCallback
         ))
+        notes.append(contentsOf: lumenCaptureTimingNotes(
+            prefix: "sourceCallbackInterval", timing: callbackInterval
+        ))
+        notes.append(contentsOf: lumenCaptureTimingNotes(
+            prefix: "sourceScheduledDisplayLead", timing: scheduledDisplayLead
+        ))
         return notes
+    }
+}
+
+struct LumenCaptureOutputOccupancyTimings: Equatable, Sendable {
+    private var previousOutput: (time: UInt64, epoch: UInt64)?
+    private(set) var interval = LumenCaptureStageTimingAccumulator()
+    private(set) var outputs: UInt64 = 0
+    private(set) var singleFlightOutputs: UInt64 = 0
+
+    mutating func observe(inflightCount: Int, callbackMachTime: UInt64, epoch: UInt64) {
+        outputs &+= 1
+        if inflightCount == 1 { singleFlightOutputs &+= 1 }
+        if let previousOutput, previousOutput.epoch == epoch,
+           callbackMachTime > previousOutput.time {
+            interval.observe(LumenMachTime.milliseconds(
+                from: previousOutput.time, to: callbackMachTime
+            ))
+        }
+        previousOutput = (callbackMachTime, epoch)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.previousOutput?.time == rhs.previousOutput?.time &&
+        lhs.previousOutput?.epoch == rhs.previousOutput?.epoch &&
+        lhs.interval == rhs.interval && lhs.outputs == rhs.outputs &&
+        lhs.singleFlightOutputs == rhs.singleFlightOutputs
     }
 }
 

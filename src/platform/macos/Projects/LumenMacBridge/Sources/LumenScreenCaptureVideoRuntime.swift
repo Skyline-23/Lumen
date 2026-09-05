@@ -122,6 +122,7 @@ final class LumenScreenCaptureVideoRuntime:
     var stopping = false
     var captureCadenceTelemetry = LumenCaptureCadenceTelemetry()
     var captureIngressTimings = LumenCaptureIngressTimings()
+    var outputOccupancyTimings = LumenCaptureOutputOccupancyTimings()
     var sourceCallbackServiceTiming = LumenCaptureStageTimingAccumulator()
     var encoderAdmissionWaitTiming = LumenCaptureStageTimingAccumulator()
     var encoderInvocationTiming = LumenCaptureStageTimingAccumulator()

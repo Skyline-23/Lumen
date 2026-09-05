@@ -46,6 +46,7 @@ extension LumenScreenCaptureVideoRuntime {
         defer {
             finishEncodedOutput(startedAt: outputServiceStartedMachTime)
         }
+        let inflightAtOutput = inflightFrameCount
         inflightFrameCount = max(inflightFrameCount - 1, 0)
 
         // A callback can arrive after the queue reset has retired its source
@@ -53,6 +54,10 @@ extension LumenScreenCaptureVideoRuntime {
         guard context.mediaEpoch == mediaEpoch else {
             return
         }
+        outputOccupancyTimings.observe(
+            inflightCount: inflightAtOutput, callbackMachTime: rawCallbackMachTime,
+            epoch: context.mediaEpoch
+        )
 
         guard let sampleBuffer = validatedCompressionOutput(
             status: status,

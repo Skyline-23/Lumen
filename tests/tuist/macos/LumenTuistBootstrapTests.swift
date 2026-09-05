@@ -3,6 +3,32 @@ import CoreMedia
 import Dispatch
 import XCTest
 final class LumenCapturePipelineTests: XCTestCase {
+    func testFutureScheduledDisplayTimePreservesSourceCadence() throws {
+        var timings = LumenCaptureIngressTimings()
+        let tick = try XCTUnwrap(LumenMachTime.ticks(for: CMTime(value: 1, timescale: 1_000)))
+        timings.observe(displayedMachTime: tick * 100, callbackMachTime: tick * 98)
+        timings.observe(displayedMachTime: tick * 110, callbackMachTime: tick * 108)
+        timings.observe(displayedMachTime: nil, callbackMachTime: tick * 118)
+        XCTAssertEqual(timings.displayInterval.sampleCount, 1)
+        XCTAssertEqual(try XCTUnwrap(timings.displayInterval.averageMilliseconds), 10, accuracy: 0.01)
+        XCTAssertEqual(timings.displayToCallback.sampleCount, 0)
+        XCTAssertEqual(timings.scheduledDisplayLead.sampleCount, 2)
+        XCTAssertEqual(try XCTUnwrap(timings.scheduledDisplayLead.averageMilliseconds), 2, accuracy: 0.01)
+        XCTAssertEqual(timings.callbackInterval.sampleCount, 2)
+    }
+
+    func testOutputOccupancySeparatesSingleFlightAndResetsGapAcrossEpochs() throws {
+        var timings = LumenCaptureOutputOccupancyTimings()
+        let tick = try XCTUnwrap(LumenMachTime.ticks(for: CMTime(value: 1, timescale: 1_000)))
+        timings.observe(inflightCount: 2, callbackMachTime: tick * 100, epoch: 1)
+        timings.observe(inflightCount: 1, callbackMachTime: tick * 114, epoch: 1)
+        timings.observe(inflightCount: 1, callbackMachTime: tick * 500, epoch: 2)
+        XCTAssertEqual(timings.outputs, 3)
+        XCTAssertEqual(timings.singleFlightOutputs, 2)
+        XCTAssertEqual(timings.interval.sampleCount, 1)
+        XCTAssertEqual(try XCTUnwrap(timings.interval.averageMilliseconds), 14, accuracy: 0.01)
+    }
+
     func testCaptureIngressTimingsExposeWindowServerCadenceAndCallbackDelay() throws {
         var timings = LumenCaptureIngressTimings()
         let firstDisplay = try XCTUnwrap(
