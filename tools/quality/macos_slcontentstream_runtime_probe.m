@@ -1097,8 +1097,90 @@ static void LumenProbeRegularTileControlOutput(void *context, void *sourceContex
     (LumenProbeTileSize){3840,2160},status,flags,sample);
 }
 
+static NSString *LumenProbeValidateRGB10Conversion(CVPixelBufferRef source, CVPixelBufferRef output) {
+  BOOL shape = output && CVPixelBufferGetWidth(output) == 3840 && CVPixelBufferGetHeight(output) == 2160 &&
+    CVPixelBufferGetPixelFormatType(output) == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange &&
+    CVPixelBufferGetPlaneCount(output) == 2;
+  if (!shape) return @"{\"valid\":false,\"error\":\"converted-shape\"}";
+  CVReturn sourceLock = CVPixelBufferLockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+  CVReturn outputLock = CVPixelBufferLockBaseAddress(output,kCVPixelBufferLock_ReadOnly);
+  if (sourceLock != 0 || outputLock != 0) {
+    if (sourceLock == 0) CVPixelBufferUnlockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+    if (outputLock == 0) CVPixelBufferUnlockBaseAddress(output,kCVPixelBufferLock_ReadOnly);
+    return @"{\"valid\":false,\"error\":\"validation-map\"}";
+  }
+  uint8_t *rgbBase = CVPixelBufferGetBaseAddress(source);
+  size_t rgbStride = CVPixelBufferGetBytesPerRow(source);
+  uint8_t *yBase = CVPixelBufferGetBaseAddressOfPlane(output,0), *uvBase = CVPixelBufferGetBaseAddressOfPlane(output,1);
+  size_t yStride = CVPixelBufferGetBytesPerRowOfPlane(output,0), uvStride = CVPixelBufferGetBytesPerRowOfPlane(output,1);
+  uint64_t lowBits = 0, checked = 0, outsideHash = UINT64_C(14695981039346656037);
+  int maxY = 0, maxUV = 0;
+  for (size_t y=0; y<2160; y+=2) for (size_t x=0; x<3840; x+=2) {
+    double average[3] = {0,0,0};
+    for (size_t dy=0; dy<2; dy++) for (size_t dx=0; dx<2; dx++) {
+      uint32_t packed = ((uint32_t *)(rgbBase+(y+dy)*rgbStride))[x+dx];
+      double r = ((packed>>20)&1023)/1023.0, g = ((packed>>10)&1023)/1023.0, b = (packed&1023)/1023.0;
+      average[0] += r/4; average[1] += g/4; average[2] += b/4;
+      int expected = (int)llround(64+876*(.2627*r+.6780*g+.0593*b));
+      uint16_t actual = ((uint16_t *)(yBase+(y+dy)*yStride))[x+dx];
+      maxY = MAX(maxY,abs((int)(actual>>6)-expected)); lowBits += (actual&63)!=0; checked++;
+      if (x+dx<126 || x+dx>=640 || y+dy<128 || y+dy>=388) {
+        outsideHash = (outsideHash ^ actual) * UINT64_C(1099511628211);
+      }
+    }
+    double luma = .2627*average[0]+.6780*average[1]+.0593*average[2];
+    int expected[2] = {(int)llround(512+896*(average[2]-luma)/(2*(1-.0593))),
+                       (int)llround(512+896*(average[0]-luma)/(2*(1-.2627)))};
+    uint16_t *uv = (uint16_t *)(uvBase+(y/2)*uvStride)+x;
+    for (size_t component=0; component<2; component++) {
+      maxUV = MAX(maxUV,abs((int)(uv[component]>>6)-expected[component])); lowBits += (uv[component]&63)!=0; checked++;
+      if (x<126 || x>=640 || y<128 || y>=388) outsideHash = (outsideHash ^ uv[component]) * UINT64_C(1099511628211);
+    }
+  }
+  CVPixelBufferUnlockBaseAddress(source,kCVPixelBufferLock_ReadOnly);
+  CVPixelBufferUnlockBaseAddress(output,kCVPixelBufferLock_ReadOnly);
+  BOOL pq = CFEqual(CVBufferGetAttachment(output,kCVImageBufferTransferFunctionKey,NULL) ?: CFSTR("missing"),kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
+  BOOL bt2020 = CFEqual(CVBufferGetAttachment(output,kCVImageBufferYCbCrMatrixKey,NULL) ?: CFSTR("missing"),kCVImageBufferYCbCrMatrix_ITU_R_2020);
+  NSDictionary *result = @{@"valid":@(maxY<=1 && maxUV<=1 && lowBits==0 && pq && bt2020),@"maxLumaCodeError":@(maxY),
+    @"maxChromaCodeError":@(maxUV),@"nonzeroPaddingBits":@(lowBits),@"checkedComponents":@(checked),
+    @"pq":@(pq),@"bt2020Matrix":@(bt2020),@"outsideRegionHash":[NSString stringWithFormat:@"%016llx",(unsigned long long)outsideHash]};
+  NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+  return [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
+    if (LumenProbeHasFlag(argc,argv,@"--rgb10-p010-smoke")) {
+      CVPixelBufferRef frames[2] = {NULL,NULL};
+      NSDictionary *attrs = @{(__bridge id)kCVPixelBufferIOSurfacePropertiesKey:@{},(__bridge id)kCVPixelBufferMetalCompatibilityKey:@YES};
+      for (int frame=0; frame<2; frame++) {
+        CVReturn status = CVPixelBufferCreate(NULL,3840,2160,kCVPixelFormatType_ARGB2101010LEPacked,(__bridge CFDictionaryRef)attrs,&frames[frame]);
+        if (status != 0 || CVPixelBufferLockBaseAddress(frames[frame],0) != 0) {
+          LumenProbePrintJSON(@{@"valid":@NO,@"error":@"rgb10-fixture-allocation"}); return 21;
+        }
+        uint8_t *base = CVPixelBufferGetBaseAddress(frames[frame]); size_t stride = CVPixelBufferGetBytesPerRow(frames[frame]);
+        for (size_t y=0; y<2160; y++) for (size_t x=0; x<3840; x++) {
+          uint32_t r=(uint32_t)((x*3+y*5)&1023),g=(uint32_t)((x*7+y*11)&1023),b=(uint32_t)((x*13+y*17)&1023);
+          if (y<64) { size_t swatch=(x/64)%8; r=(swatch&1)?1023:0;g=(swatch&2)?1023:0;b=(swatch&4)?1023:0; }
+          if (frame==1 && x>=127 && x<640 && y>=129 && y<388) { r=1023-r;g^=512;b=1023-b; }
+          ((uint32_t *)(base+y*stride))[x] = (3u<<30)|(r<<20)|(g<<10)|b;
+        }
+        CVPixelBufferUnlockBaseAddress(frames[frame],0);
+        CVBufferSetAttachment(frames[frame],kCVImageBufferColorPrimariesKey,kCVImageBufferColorPrimaries_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(frames[frame],kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,kCVAttachmentMode_ShouldPropagate);
+      }
+      CVPixelBufferRef original=frames[0],changed=frames[1];
+      dispatch_semaphore_t done = dispatch_semaphore_create(0); __block NSString *json;
+      [LumenRGB10ConversionProbe runWithSource:original changedSource:changed
+        inspect:^NSString *(CVPixelBufferRef output, BOOL partial) { return LumenProbeValidateRGB10Conversion(partial?changed:original,output); }
+        completion:^(NSString *value) { json=value;dispatch_semaphore_signal(done); }];
+      if (dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC)) != 0) {
+        LumenProbePrintJSON(@{@"valid":@NO,@"error":@"rgb10-conversion-timeout"}); return 21;
+      }
+      NSDictionary *result=[NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+      LumenProbePrintJSON(result ?: @{@"valid":@NO,@"error":@"rgb10-result-invalid"});
+      CFRelease(original);CFRelease(changed);return [result[@"valid"] boolValue]?0:21;
+    }
     if (LumenProbeHasFlag(argc, argv, @"--hevc-tile-capabilities")) {
       NSString *benchmarkArgument = LumenProbeArgument(argc,argv,@"--benchmark-tile-seconds");
       double benchmarkSeconds = benchmarkArgument.doubleValue;

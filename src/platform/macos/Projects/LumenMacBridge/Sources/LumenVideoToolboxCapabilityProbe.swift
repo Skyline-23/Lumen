@@ -4,6 +4,51 @@ import Darwin
 import Foundation
 import VideoToolbox
 
+@objc(LumenRGB10ConversionProbe)
+public final class LumenRGB10ConversionProbe: NSObject {
+    @objc(runWithSource:changedSource:inspect:completion:)
+    public static func run(source: CVPixelBuffer, changedSource: CVPixelBuffer,
+                           inspect: @escaping @Sendable (CVPixelBuffer, Bool) -> String,
+                           completion: @escaping @Sendable (String) -> Void) {
+        let original = LumenRGB10ConversionSurface(buffer: source)
+        let changed = LumenRGB10ConversionSurface(buffer: changedSource)
+        Task {
+            completion(await LumenRGB10ConversionProbeRunner().run(original, changed: changed, inspect: inspect))
+        }
+    }
+}
+
+private actor LumenRGB10ConversionProbeRunner {
+    func run(_ source: LumenRGB10ConversionSurface, changed: LumenRGB10ConversionSurface,
+             inspect: @Sendable (CVPixelBuffer, Bool) -> String) async -> String {
+        var result: [String: Any] = ["mode": "rgb10-p010-full-and-partial-correctness", "productionAcceptance": false]
+        do {
+            let converter = try LumenRGB10ToP010Converter(width: 3840, height: 2160)
+            let full = try await converter.convert(source)
+            let fullInspection = try JSONSerialization.jsonObject(with: Data(inspect(full.surface.buffer, false).utf8)) as? [String: Any] ?? [:]
+            let partial = try await converter.convert(changed, destination: full.surface,
+                dirtyRegion: CGRect(x: 127, y: 129, width: 513, height: 259))
+            let partialInspection = try JSONSerialization.jsonObject(with: Data(inspect(partial.surface.buffer, true).utf8)) as? [String: Any] ?? [:]
+            result["full"] = fullInspection
+            result["partial"] = partialInspection
+            result["fullGPUMilliseconds"] = full.gpuMilliseconds
+            result["partialGPUMilliseconds"] = partial.gpuMilliseconds
+            result["fullElapsedMilliseconds"] = full.elapsedMilliseconds
+            result["partialElapsedMilliseconds"] = partial.elapsedMilliseconds
+            result["expandedRegion"] = [partial.region.minX, partial.region.minY, partial.region.width, partial.region.height]
+            let unchanged = (fullInspection["outsideRegionHash"] as? String) == (partialInspection["outsideRegionHash"] as? String)
+            result["unchangedRegionBitExact"] = unchanged
+            result["valid"] = fullInspection["valid"] as? Bool == true && partialInspection["valid"] as? Bool == true && unchanged
+        } catch {
+            result["valid"] = false
+            result["error"] = String(describing: error)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "{\"valid\":false,\"error\":\"rgb10-result-serialization\"}" }
+        return json
+    }
+}
+
 private struct LumenDisplayDamageObservation: Sendable {
     let width: Int
     let height: Int
