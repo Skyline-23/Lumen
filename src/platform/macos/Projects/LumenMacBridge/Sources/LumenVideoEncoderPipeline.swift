@@ -207,6 +207,23 @@ enum LumenRealtimeVideoEncoderAdmissionPolicy {
     }
 }
 
+/// Owns the single delayed admission wake. Runtime frame state remains on its
+/// existing C-callback owner queue; no timer or additional queue owns frames.
+actor LumenEncoderOverlapClock {
+    private var wake: Task<Void, Never>?
+
+    func schedule(until deadline: ContinuousClock.Instant,
+                  notify: @escaping @Sendable () -> Void) {
+        wake?.cancel()
+        wake = Task {
+            do { try await ContinuousClock().sleep(until: deadline) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            notify()
+        }
+    }
+}
+
 /// Keeps the synchronous VideoToolbox admission call off the ScreenCaptureKit
 /// callback queue without invoking one non-Sendable compression session from
 /// multiple threads. One source may be submitting and one latest source may

@@ -153,6 +153,12 @@ final class LumenScreenCaptureVideoRuntime:
         LumenVideoToolboxOutputLifecycle<LumenEncodedFrameContext>(
             ownerQueue: queue
         )
+    let encoderOverlapClock = LumenEncoderOverlapClock()
+    var encoderOverlapEpoch: UInt64?
+    var encoderOverlapLastOutput: UInt64?
+    var encoderOverlapIntervalMilliseconds: Double?
+    var encoderOverlapNotBefore: ContinuousClock.Instant?
+    var encoderOverlapWakeScheduled = false
     lazy var encoderAdmission = LumenLatestFrameSerialEncoderAdmission<
         LumenVideoEncoderSubmission,
         LumenVideoEncoderSubmissionResult
@@ -161,9 +167,7 @@ final class LumenScreenCaptureVideoRuntime:
         submissionQueue: encoderQueue,
         hasSubmissionCapacity: { [weak self] in
             guard let self else { return false }
-            return LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
-                inflightFrameCount: self.inflightFrameCount
-            )
+            return self.hasFreshEncoderSubmissionCapacity()
         },
         entryHandler: { [weak self] submission in
             self?.willSubmitToVideoToolbox(submission)

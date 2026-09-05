@@ -95,6 +95,7 @@ extension LumenScreenCaptureVideoRuntime {
         guard acceptRequiredKeyFrame(isKeyFrame, context: context) else {
             return
         }
+        observeEncoderOverlapOutput(context: context, rawCallbackMachTime: rawCallbackMachTime)
         encoderAdmission.resumePendingIfPossible()
         if statisticsPublicationReason == .highRateUpdate {
             publishSuccessfulOutputStatisticsIfNeeded()

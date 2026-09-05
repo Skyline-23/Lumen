@@ -10,6 +10,73 @@ import Synchronization
 import VideoToolbox
 
 extension LumenScreenCaptureVideoRuntime {
+    func hasFreshEncoderSubmissionCapacity() -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !stopping,
+              LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
+                inflightFrameCount: inflightFrameCount
+              ) else { return false }
+        if encoderOverlapEpoch != mediaEpoch {
+            encoderOverlapEpoch = mediaEpoch
+            encoderOverlapLastOutput = nil
+            encoderOverlapIntervalMilliseconds = nil
+            encoderOverlapNotBefore = nil
+        }
+        // Never delay an idle encoder, bootstrap, or the first output samples
+        // used to learn its actual busy completion cadence.
+        guard inflightFrameCount == 1, videoBootstrapAdmission.isOpen,
+              let deadline = encoderOverlapNotBefore,
+              ContinuousClock().now < deadline else { return true }
+        if !encoderOverlapWakeScheduled {
+            encoderOverlapWakeScheduled = true
+            Task { [weak self] in
+                guard let self else { return }
+                await encoderOverlapClock.schedule(until: deadline) { [weak self] in
+                    guard let self else { return }
+                    queue.async { [weak self] in
+                        guard let self else { return }
+                        encoderOverlapWakeScheduled = false
+                        guard !stopping else { return }
+                        encoderAdmission.resumePendingIfPossible()
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    func observeEncoderOverlapOutput(context: LumenEncodedFrameContext,
+                                     rawCallbackMachTime: UInt64) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard context.bootstrapReason == nil else {
+            encoderOverlapLastOutput = nil
+            encoderOverlapNotBefore = nil
+            return
+        }
+        let previous = encoderOverlapLastOutput
+        encoderOverlapLastOutput = rawCallbackMachTime
+        encoderOverlapNotBefore = nil
+        guard inflightFrameCount > 0, let previous,
+              rawCallbackMachTime > previous else { return }
+        let interval = LumenMachTime.milliseconds(from: previous, to: rawCallbackMachTime)
+        let callback = LumenMachTime.milliseconds(from: context.submissionMachTime,
+                                                  to: rawCallbackMachTime)
+        // A frame submitted after the previous output includes idle time;
+        // do not learn that gap as hardware service time.
+        guard interval > 0, interval <= callback else { return }
+        let cadence = encoderOverlapIntervalMilliseconds.map {
+            $0 * 0.875 + interval * 0.125
+        } ?? interval
+        encoderOverlapIntervalMilliseconds = cadence
+        let elapsed = LumenMachTime.milliseconds(from: rawCallbackMachTime,
+                                                 to: mach_absolute_time())
+        let delay = cadence * 0.5 - elapsed
+        guard delay > 0 else { return }
+        encoderOverlapNotBefore = ContinuousClock().now.advanced(
+            by: .nanoseconds(Int64(delay * 1_000_000))
+        )
+    }
+
     @discardableResult
     func submitSource(
         _ source: LumenPendingVideoBootstrapSource,
