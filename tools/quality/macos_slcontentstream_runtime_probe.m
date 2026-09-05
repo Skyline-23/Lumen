@@ -1061,7 +1061,8 @@ int main(int argc, const char *argv[]) {
       NSString *benchmarkArgument = LumenProbeArgument(argc,argv,@"--benchmark-tile-seconds");
       double benchmarkSeconds = benchmarkArgument.doubleValue;
       BOOL benchmark = benchmarkArgument != nil;
-      BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control");
+      BOOL regionCapabilities = LumenProbeHasFlag(argc,argv,@"--inspect-regular-region-capabilities");
+      BOOL regularControl = LumenProbeHasFlag(argc,argv,@"--benchmark-regular-control") || regionCapabilities;
       BOOL regionPair = LumenProbeHasFlag(argc,argv,@"--inspect-tile-region-pair");
       if (regionPair && (benchmark || regularControl ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) {
@@ -1069,7 +1070,10 @@ int main(int argc, const char *argv[]) {
       }
       if ((benchmark && (!isfinite(benchmarkSeconds) || benchmarkSeconds < 1 || benchmarkSeconds > 30 ||
           !LumenProbeHasFlag(argc,argv,@"--create-tile-session") || !LumenProbeHasFlag(argc,argv,@"--encode-tile-samples"))) ||
-          (regularControl && !benchmark)) {
+          (regularControl && !benchmark && !regionCapabilities) ||
+          (regionCapabilities && (benchmark || regionPair ||
+            !LumenProbeHasFlag(argc,argv,@"--create-tile-session") ||
+            LumenProbeHasFlag(argc,argv,@"--encode-tile-samples")))) {
         LumenProbePrintJSON(@{@"error":@"invalid-tile-capacity-screen-arguments"}); return 20;
       }
       // Discovery only: never creates a display or starts capture/encoding.
@@ -1139,6 +1143,37 @@ int main(int argc, const char *argv[]) {
           tileSession[@"sessionKind"] = regularControl ? @"regular-control" : @"private-tile";
           if (session) {
             tileSession[@"main10Status"] = @(set(session,kVTCompressionPropertyKey_ProfileLevel,kVTProfileLevel_HEVC_Main10_AutoLevel));
+            if (regionCapabilities) {
+              // Property introspection only. Exported frame-option names are not
+              // proof of support; do not send guessed private rectangle payloads.
+              CFDictionaryRef all = NULL;
+              OSStatus supportedStatus = VTSessionCopySupportedPropertyDictionary(session,&all);
+              NSDictionary *supported = (__bridge NSDictionary *)all;
+              NSMutableDictionary *regionProperties = [NSMutableDictionary dictionary];
+              NSMutableSet<NSString *> *keys = [NSMutableSet setWithArray:@[
+                @"MotionEstimationSearchMode", @"SupportedMotionSearchModes",
+                @"PictureInPictureRegion", @"RegionOfInterest", @"EnableUserQPMap",
+                @"Usage", @"iChatUsage", @"DirtyRects", @"MovedRects",
+                @"EncoderFirstMbInSkipSlices"]];
+              for (NSString *key in supported) {
+                for (NSString *term in @[@"motion",@"region",@"rect",@"skip",@"usage",@"qpmap",@"reference"])
+                  if ([key localizedCaseInsensitiveContainsString:term]) { [keys addObject:key]; break; }
+              }
+              for (NSString *key in [[keys allObjects] sortedArrayUsingSelector:@selector(compare:)]) {
+                CFTypeRef value = NULL;
+                OSStatus propertyStatus = VTSessionCopyProperty(session,(__bridge CFStringRef)key,NULL,&value);
+                id object = (__bridge id)value;
+                if (object && ![NSJSONSerialization isValidJSONObject:@[object]]) object = [object description];
+                regionProperties[key] = @{@"advertised":@(supported[key] != nil),
+                  @"metadata":supported[key] ?: @{}, @"copyStatus":@(propertyStatus),
+                  @"value":object ?: NSNull.null};
+                if (value) CFRelease(value);
+              }
+              tileSession[@"regionPropertyStatus"] = @(supportedStatus);
+              tileSession[@"regionProperties"] = regionProperties;
+              tileSession[@"frameOptionSupportEstablished"] = @NO;
+              if (all) CFRelease(all);
+            }
             NSMutableDictionary *values = [NSMutableDictionary dictionary];
             for (NSString *key in @[@"TileEncoderRequirements", @"CanvasPixelBufferAttributes",
                 @"VideoEncoderPixelBufferAttributes", @"UsingHardwareAcceleratedVideoEncoder", @"ProfileLevel",
