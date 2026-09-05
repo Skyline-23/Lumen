@@ -545,6 +545,14 @@ static BOOL LumenContentStreamAvailable(void) {
     properties[minimumFrameTimeKey] = @(MAX(minimumFrameTime, 0.0));
     properties[showCursorKey] = @(showCursor);
     properties[queueDepthKey] = @(MAX(1, MIN(queueDepth, 2)));
+    if (dynamicRangeMode != 0) {
+      // CGXDisplayStreamCreate reads the SLContentStream source key, not the
+      // alternate DynamicRangeMode key emitted by the same property mapper.
+      NSString *dynamicRangeKey =
+        LumenSkyLightStringConstant("kSLContentStreamDynamicRangeModeKey");
+      if (dynamicRangeKey == nil) { return nil; }
+      properties[dynamicRangeKey] = @(dynamicRangeMode);
+    }
     if (yCbCrMatrix != nil) {
       if (matrixKey == nil) { return nil; }
       properties[matrixKey] = yCbCrMatrix;
