@@ -221,7 +221,10 @@ static void LumenProbeRunApplicationForDuration(double duration) {
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration];
   while ([deadline timeIntervalSinceNow] > 0) {
     NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.050];
-    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:slice];
+    NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
+      untilDate:slice inMode:NSDefaultRunLoopMode dequeue:YES];
+    if (event) [NSApp sendEvent:event];
+    [NSApp updateWindows];
   }
 }
 
@@ -918,13 +921,14 @@ int main(int argc, const char *argv[]) {
       atexit(LumenProbeDestroyOwnedDisplay);
       // WindowServer publishes modes asynchronously after creation.
       BOOL selected = NO;
-      for (NSUInteger attempt = 0; LumenProbeOwnedDisplay && attempt < 20; attempt++) {
+      for (NSUInteger attempt = 0; LumenProbeOwnedDisplay && attempt < 80; attempt++) {
         LumenProbeRunApplicationForDuration(.1);
         selected = [LumenProbeOwnedDisplay selectPublishedModeWithError:&error];
         if (selected) break;
       }
       if (!selected) {
-        LumenProbePrintJSON(@{@"error":@"isolated-display-create-failed",@"message":error.localizedDescription ?: @"unknown"}); return 10;
+        LumenProbePrintJSON(@{@"error":@"isolated-display-create-failed",@"message":error.localizedDescription ?: @"unknown",
+          @"displayID":@(LumenProbeOwnedDisplay.displayID),@"onlineDisplays":LumenProbeOnlineDisplays()}); return 10;
       }
       displayID = LumenProbeOwnedDisplay.displayID;
       LumenProbeRunApplicationForDuration(.5);
