@@ -1068,10 +1068,56 @@ int main(int argc, const char *argv[]) {
         if (encoderID) CFRelease(encoderID);
         if (properties) CFRelease(properties);
       }
+      NSMutableDictionary *tileSession = [NSMutableDictionary dictionary];
+      if (LumenProbeHasFlag(argc, argv, @"--create-tile-session")) {
+        // macOS 27 disassembly: x1 packs CMVideoDimensions, x2 is codec;
+        // x3/x4 are spec/attributes, x6/x7 callback/refcon, stack[0] out.
+        typedef OSStatus (*TileCreate)(CFAllocatorRef, CMVideoDimensions, CMVideoCodecType,
+          CFDictionaryRef, CFDictionaryRef, CFAllocatorRef, void *, void *, CFTypeRef *);
+        typedef OSStatus (*TileCopy)(CFTypeRef, CFStringRef, CFAllocatorRef, CFTypeRef *);
+        typedef OSStatus (*TileSet)(CFTypeRef, CFStringRef, CFTypeRef);
+        typedef void (*TileInvalidate)(CFTypeRef);
+        TileCreate create = (TileCreate)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionCreate");
+        TileCopy copy = (TileCopy)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionCopyProperty");
+        TileSet set = (TileSet)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionSetProperty");
+        TileInvalidate invalidate = (TileInvalidate)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionInvalidate");
+        if (!create || !copy || !set || !invalidate || !tileKey || !*tileKey) {
+          tileSession[@"error"] = @"tile-symbol-unavailable";
+        } else {
+          NSDictionary *spec = @{(__bridge NSString *)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:@YES,
+            (__bridge NSString *)*tileKey:@YES};
+          NSDictionary *attrs = @{(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),
+            (__bridge NSString *)kCVPixelBufferWidthKey:@3840, (__bridge NSString *)kCVPixelBufferHeightKey:@2160,
+            (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey:@{}};
+          CFTypeRef session = NULL;
+          OSStatus status = create(kCFAllocatorDefault, (CMVideoDimensions){3840,2160}, kCMVideoCodecType_HEVC,
+            (__bridge CFDictionaryRef)spec, (__bridge CFDictionaryRef)attrs, NULL, NULL, NULL, &session);
+          tileSession[@"createStatus"] = @(status);
+          if (session) {
+            tileSession[@"main10Status"] = @(set(session,kVTCompressionPropertyKey_ProfileLevel,kVTProfileLevel_HEVC_Main10_AutoLevel));
+            NSMutableDictionary *values = [NSMutableDictionary dictionary];
+            for (NSString *key in @[@"TileEncoderRequirements", @"CanvasPixelBufferAttributes",
+                @"VideoEncoderPixelBufferAttributes", @"UsingHardwareAcceleratedVideoEncoder", @"ProfileLevel",
+                @"RealTime", @"AllowFrameReordering", @"AllowTemporalCompression", @"RecommendedParallelizationLimit"]) {
+              CFTypeRef value = NULL;
+              OSStatus propertyStatus = copy(session, (__bridge CFStringRef)key, NULL, &value);
+              id object = (__bridge id)value;
+              if (object && ![NSJSONSerialization isValidJSONObject:@[object]]) object = [object description];
+              values[key] = @{@"status":@(propertyStatus), @"value":object ?: NSNull.null};
+              if (value) CFRelease(value);
+            }
+            tileSession[@"properties"] = values;
+            invalidate(session);
+            CFRelease(session);
+          }
+        }
+      }
       LumenProbePrintJSON(@{@"mode":@"hevc-tile-capability-discovery", @"listStatus":@(listStatus),
-        @"tileKeyPresent":@(tileKey && *tileKey), @"encoders":encoders, @"discoveries":discoveries});
+        @"tileKeyPresent":@(tileKey && *tileKey), @"encoders":encoders, @"discoveries":discoveries,
+        @"tileSession":tileSession});
       if (list) CFRelease(list);
-      return listStatus == noErr ? 0 : 20;
+      return listStatus == noErr && !tileSession[@"error"] &&
+        (!tileSession[@"createStatus"] || [tileSession[@"createStatus"] intValue] == noErr) ? 0 : 20;
     }
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
       LumenProbeOnlineDisplays();
