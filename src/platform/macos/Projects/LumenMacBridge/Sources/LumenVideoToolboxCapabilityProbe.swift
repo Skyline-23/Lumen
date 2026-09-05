@@ -240,6 +240,104 @@ private struct LumenReplayCompressedSample: @unchecked Sendable {
     let acknowledgeAfterDecode: Bool
 }
 
+private struct LumenTileProbeSample: @unchecked Sendable {
+    let sample: CMSampleBuffer?
+    let status: Int32
+    let flags: UInt32
+    let x: Int32
+    let y: Int32
+    let width: Int32
+    let height: Int32
+}
+
+/// Bounded C-callback ingress for the existing screen harness. Mutable sample
+/// collection and decoder coordination remain actor-owned, not in ObjC callbacks.
+@objc(LumenTileOutputProbe)
+public final class LumenTileOutputProbe: NSObject {
+    private let continuation: AsyncStream<LumenTileProbeSample>.Continuation
+    private let result: Task<String, Never>
+
+    @objc public override init() {
+        let (stream, continuation) = AsyncStream<LumenTileProbeSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        self.continuation = continuation
+        result = Task { await LumenTileOutputCollector().run(stream) }
+        super.init()
+    }
+
+    @objc(recordSample:status:flags:x:y:width:height:)
+    public func record(sample: CMSampleBuffer?, status: Int32, flags: UInt32,
+                       x: Int32, y: Int32, width: Int32, height: Int32) {
+        continuation.yield(.init(sample: sample, status: status, flags: flags,
+                                 x: x, y: y, width: width, height: height))
+    }
+
+    @objc(finishWithCompletion:)
+    public func finish(completion: @escaping @Sendable (String) -> Void) {
+        continuation.finish()
+        Task { completion(await result.value) }
+    }
+}
+
+private actor LumenTileOutputCollector {
+    func run(_ input: AsyncStream<LumenTileProbeSample>) async -> String {
+        var rows: [[String: Any]] = []
+        let (compressed, continuation) = AsyncStream<LumenReplayCompressedSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        var valid = true
+        for await output in input {
+            guard let sample = output.sample, output.status == noErr, output.flags & 2 == 0,
+                  let format = sample.formatDescription, let block = sample.dataBuffer else {
+                valid = false
+                rows.append(["status": output.status, "flags": output.flags, "hasSample": output.sample != nil])
+                continue
+            }
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format)
+            var headerLength: Int32 = 0
+            let headerStatus = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format,
+                parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil,
+                parameterSetCountOut: nil, nalUnitHeaderLengthOut: &headerLength)
+            var nalTypes: [Int] = []
+            var parsed = headerStatus == noErr && [1, 2, 4].contains(headerLength)
+            var offset = 0
+            let size = CMBlockBufferGetDataLength(block)
+            var header = [UInt8](repeating: 0, count: 4)
+            while parsed && offset < size {
+                guard size - offset >= Int(headerLength),
+                      CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: Int(headerLength), destination: &header) == noErr else {
+                    parsed = false; break
+                }
+                let length = header.prefix(Int(headerLength)).reduce(0) { ($0 << 8) | Int($1) }
+                offset += Int(headerLength)
+                guard length >= 2, length <= size - offset,
+                      CMBlockBufferCopyDataBytes(block, atOffset: offset, dataLength: 2, destination: &header) == noErr else {
+                    parsed = false; break
+                }
+                nalTypes.append(Int((header[0] >> 1) & 63))
+                offset += length
+            }
+            let transfer = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction)
+            let pq = (transfer as? String) == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String)
+            let vcl = nalTypes.filter { $0 <= 31 }
+            valid = valid && parsed && offset == size && !vcl.isEmpty && pq &&
+                dimensions.width == 3840 && dimensions.height == 2160 &&
+                output.x == 0 && output.y == 0 && output.width == 3840 && output.height == 2160
+            rows.append(["status": output.status, "flags": output.flags, "bytes": size,
+                "origin": [output.x, output.y], "tileSize": [output.width, output.height],
+                "formatSize": [dimensions.width, dimensions.height], "nalTypes": nalTypes,
+                "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
+                "durationValid": sample.duration.isValid])
+            if case .dropped = continuation.yield(.init(value: sample, acknowledgeAfterDecode: false)) { valid = false }
+        }
+        continuation.finish()
+        let decoded = await LumenReplayDecoderLoad().run(compressed,
+            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, acknowledge: {})
+        valid = valid && rows.count == 3 && decoded["hardware"] == 1 && decoded["decoded"] == 3 &&
+            decoded["submitted"] == 3 && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
+        let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid,
+            "outputs": rows, "decoder": decoded]
+        return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)) ?? Data(), as: UTF8.self)
+    }
+}
+
 private final class LumenReplayDecodeAcknowledgement: Sendable {
     let acknowledge: @Sendable () -> Void
     init(_ acknowledge: @escaping @Sendable () -> Void) { self.acknowledge = acknowledge }
