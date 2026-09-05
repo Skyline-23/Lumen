@@ -220,27 +220,6 @@ extension LumenScreenCaptureVideoRuntime {
         if let color = configuration.encodedColorConfiguration {
             try configureColorProperties(color)
         }
-        #if DEBUG
-        // Capability experiment only: preserve the default single-session path.
-        // A successful setter is not proof; the screen harness also checks the
-        // emitted VCL units and hardware-decoder acceptance.
-        if let requested = ProcessInfo.processInfo.environment["LUMEN_HEVC_SLICE_COUNT"] {
-            guard configuration.codec == .hevc,
-                  let count = Int(requested), (1 ... 32).contains(count),
-                  let session = compressionSession else {
-                throw LumenExactCaptureError.invalidFormat("invalid HEVC slice experiment")
-            }
-            let key = "NumberOfSlices" as CFString
-            try setProperty(key, value: count as CFNumber)
-            var actual: CFTypeRef?
-            let status = VTSessionCopyProperty(session, key: key, allocator: nil, valueOut: &actual)
-            guard status == noErr, (actual as? NSNumber)?.intValue == count else {
-                throw LumenExactCaptureError.invalidFormat(
-                    "HEVC NumberOfSlices readback mismatch: requested=\(count) status=\(status) actual=\(String(describing: actual))"
-                )
-            }
-        }
-        #endif
     }
 
     func configureColorProperties(
