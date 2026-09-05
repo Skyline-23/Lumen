@@ -9,10 +9,11 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
+        sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
     ) {
         guard frames.count > 0, frames.count <= 32, width > 0, height > 0,
@@ -24,7 +25,38 @@ public final class LumenEncoderReplayProbe: NSObject {
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if compareDecoderLoad {
+            if let sourceLoadController {
+                var results: [[String: Any]] = []
+                for enabled in [false, true, false] {
+                    let start = sourceLoadController(enabled)
+                    guard start["success"] as? Bool == true else {
+                        _ = sourceLoadController(false)
+                        completion("{\"error\":\"raw-source-load-start-failed\"}")
+                        return
+                    }
+                    let result = await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1
+                    )
+                    let sourceResult = sourceLoadController(false)
+                    guard var row = (try? JSONSerialization.jsonObject(
+                        with: Data(result.utf8)
+                    )) as? [String: Any] else {
+                        completion("{\"error\":\"raw-source-load-result-invalid\"}")
+                        return
+                    }
+                    row["rawSourceLoad"] = enabled
+                    row["rawSourceMetrics"] = sourceResult
+                    row["rawSourceValid"] = sourceResult["success"] as? Bool == true
+                        && (!enabled || (sourceResult["completeFrames"] as? Int ?? 0) > 0)
+                    results.append(row)
+                }
+                let result: [String: Any] = [
+                    "mode": "production-raw-source-load-aba", "comparisons": results
+                ]
+                let data = try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)
+                completion(String(decoding: data ?? Data("{\"error\":\"result-encoding-failed\"}".utf8), as: UTF8.self))
+            } else if compareDecoderLoad {
                 var results: [String] = []
                 for enabled in [false, true, false] {
                     results.append(await runner.run(

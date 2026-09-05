@@ -1005,9 +1005,17 @@ int main(int argc, const char *argv[]) {
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
+    BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (compareRawSourceLoad && (!productionReplay || !stimulus || useSCK ||
+        LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
+      LumenProbePrintJSON(@{@"error":@"raw-source-load-requires-private-stimulated-production-replay"});
+      return 13;
+    }
     if (!useSCK && ![sourceMode isEqualToString:@"private"]) return 13;
     if (LumenProbeHasFlag(argc,argv,@"--pipeline") &&
         (useSCK || replayCompare || LumenProbeArgument(argc,argv,@"--encoder-mode"))) {
@@ -1269,7 +1277,7 @@ int main(int argc, const char *argv[]) {
     NSDictionary<NSString *, id> *stimulusMetrics = stimulusWindow == nil
       ? @{}
       : [stimulusWindow metrics];
-    [stimulusWindow stop];
+    if (!compareRawSourceLoad) [stimulusWindow stop];
     if (replayCompare) {
       if (replayFrames.count != 16) {
         LumenProbePrintJSON(@{@"error":@"replay-fixture-incomplete",@"frames":@(replayFrames.count)}); return 15;
@@ -1277,11 +1285,36 @@ int main(int argc, const char *argv[]) {
       if (productionReplay) {
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         __block NSString *output;
+        __block LumenMacSkyLightDisplayStream *loadStream = nil;
+        __block uint64_t loadStartCount = 0;
+        __block uint64_t loadStartNanos = 0;
+        NSDictionary *(^sourceLoadController)(BOOL) = compareRawSourceLoad ? ^NSDictionary *(BOOL enabled) {
+          if (enabled) {
+            dispatch_sync(callbackQueue, ^{ loadStartCount = state.completeCount; });
+            loadStartNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+            loadStream = [[LumenMacSkyLightDisplayStream alloc]
+              initWithDisplayID:displayID outputWidth:outputWidth outputHeight:outputHeight pixelFormat:pixelFormat
+              minimumFrameTime:0 queueDepth:2 showCursor:YES yCbCrMatrix:matrix dynamicRangeMode:hdr ? 2 : 0
+              colorSpaceName:colorSpace callbackQueue:callbackQueue frameHandler:handler];
+            NSError *error = nil;
+            BOOL success = loadStream != nil && [loadStream startWithError:&error];
+            return @{@"success":@(success), @"message":error.localizedDescription ?: @""};
+          }
+          if (loadStream == nil) return @{@"success":@YES, @"completeFrames":@0};
+          int32_t status = [loadStream stop];
+          loadStream = nil;
+          __block uint64_t count = 0;
+          dispatch_sync(callbackQueue, ^{ count = state.completeCount - loadStartCount; });
+          double elapsed = (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - loadStartNanos) / 1e9;
+          return @{@"success":@(status == 0), @"stopStatus":@(status),
+                   @"completeFrames":@(count), @"sourceFPS":@(count / elapsed)};
+        } : nil;
         [LumenEncoderReplayProbe runWithFrames:replayFrames width:outputWidth height:outputHeight
           hdr:hdr bitrate:targetBitrateKbps duration:duration
           comparePeriodic:LumenProbeHasFlag(argc,argv,@"--compare-periodic")
           compareOverlap:LumenProbeHasFlag(argc,argv,@"--compare-overlap")
-          compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load") completion:^(NSString *json) {
+          compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load")
+          sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration*3+30];
@@ -1291,12 +1324,15 @@ int main(int argc, const char *argv[]) {
           }
           LumenProbeRunApplicationForDuration(.005);
         }
+        [stimulusWindow stop];
         fprintf(stdout,"%s\n",output.UTF8String);
         NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[output dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
         if (result[@"comparisons"]) {
           for (NSDictionary *row in result[@"comparisons"])
             if (row[@"error"] || ![row[@"hdrValid"] boolValue] ||
-                ![row[@"decoderValid"] boolValue] || [row[@"processingFailures"] intValue] != 0) return 18;
+                ![row[@"decoderValid"] boolValue] ||
+                (row[@"rawSourceValid"] && ![row[@"rawSourceValid"] boolValue]) ||
+                [row[@"processingFailures"] intValue] != 0) return 18;
           return 0;
         }
         return result && !result[@"error"] && [result[@"hdrValid"] boolValue] &&
