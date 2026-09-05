@@ -72,7 +72,10 @@ extension LumenScreenCaptureVideoRuntime {
         encoderOverlapIntervalMilliseconds = cadence
         let elapsed = LumenMachTime.milliseconds(from: rawCallbackMachTime,
                                                  to: mach_absolute_time())
-        let delay = cadence * 0.5 - elapsed
+        // Bound a wake to one negotiated frame even after sleep or a long
+        // driver stall; never turn an old observation into a long timer.
+        let delay = min(cadence * 0.5,
+                        1_000 / Double(configuration.effectiveTargetFrameRate)) - elapsed
         guard delay > 0 else { return }
         encoderOverlapNotBefore = ContinuousClock().now.advanced(
             by: .nanoseconds(Int64(delay * 1_000_000))

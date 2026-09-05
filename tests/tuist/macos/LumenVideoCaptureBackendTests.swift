@@ -1,12 +1,93 @@
 @testable import LumenMacBridge
 import CoreMedia
 import CoreVideo
+import Darwin
 import IOSurface
 import ScreenCaptureKit
 import Synchronization
 import XCTest
 
 final class LumenVideoCaptureBackendTests: XCTestCase {
+    private func makeOverlapRuntime() throws -> LumenScreenCaptureVideoRuntime {
+        try LumenScreenCaptureVideoRuntime(
+            configuration: LumenMacCaptureConfiguration(
+                displayID: 42, codec: .hevc, videoProfile: .hevcMain,
+                chromaSubsampling: .yuv420, bitDepth: 8, dynamicRange: .sdr,
+                targetFrameRate: 120
+            ),
+            callbacks: .init(frameHandler: { _ in }, eventHandler: nil),
+            statisticsHandler: { _ in }, terminationHandler: { _ in }
+        )
+    }
+
+    func testOverlapNeverDelaysIdleOrBootstrapAndPreservesTwoSlotBound() throws {
+        let runtime = try makeOverlapRuntime()
+        runtime.queue.sync {
+            runtime.encoderOverlapEpoch = runtime.mediaEpoch
+            runtime.encoderOverlapNotBefore = ContinuousClock().now.advanced(by: .seconds(1))
+            runtime.inflightFrameCount = 0
+            XCTAssertTrue(runtime.hasFreshEncoderSubmissionCapacity())
+            runtime.inflightFrameCount = 1
+            XCTAssertTrue(runtime.hasFreshEncoderSubmissionCapacity())
+            runtime.inflightFrameCount = 2
+            XCTAssertFalse(runtime.hasFreshEncoderSubmissionCapacity())
+            runtime.stopping = true
+            runtime.inflightFrameCount = 0
+            XCTAssertFalse(runtime.hasFreshEncoderSubmissionCapacity())
+        }
+    }
+
+    func testOverlapRetiresOldEpochCadenceBeforeAdmission() throws {
+        let runtime = try makeOverlapRuntime()
+        runtime.queue.sync {
+            runtime.encoderOverlapEpoch = runtime.mediaEpoch &+ 1
+            runtime.encoderOverlapLastOutput = 1
+            runtime.encoderOverlapIntervalMilliseconds = 500
+            runtime.encoderOverlapNotBefore = ContinuousClock().now.advanced(by: .seconds(1))
+            XCTAssertTrue(runtime.hasFreshEncoderSubmissionCapacity())
+            XCTAssertNil(runtime.encoderOverlapLastOutput)
+            XCTAssertNil(runtime.encoderOverlapIntervalMilliseconds)
+            XCTAssertNil(runtime.encoderOverlapNotBefore)
+        }
+    }
+
+    func testOverlapLearnsOnlyBusyIntervalsAndBoundsWakeAfterStall() throws {
+        let runtime = try makeOverlapRuntime()
+        let now = mach_absolute_time()
+        let second = try XCTUnwrap(LumenMachTime.ticks(for: CMTime(seconds: 1, preferredTimescale: 1_000)))
+        let context = LumenEncodedFrameContext(
+            sequenceNumber: 1, displayTime: now - second,
+            submissionMachTime: now - second, mediaEpoch: runtime.mediaEpoch,
+            bootstrapReason: nil, requiresBootstrapAcknowledgement: false, sourceSurfaceLease: nil
+        )
+        runtime.queue.sync {
+            runtime.encoderOverlapLastOutput = now - second / 2
+            runtime.inflightFrameCount = 1
+            runtime.observeEncoderOverlapOutput(context: context, rawCallbackMachTime: now)
+            XCTAssertNotNil(runtime.encoderOverlapIntervalMilliseconds)
+            if let deadline = runtime.encoderOverlapNotBefore {
+                XCTAssertLessThanOrEqual(ContinuousClock().now.duration(to: deadline), .milliseconds(9))
+            }
+            runtime.inflightFrameCount = 0
+            runtime.observeEncoderOverlapOutput(context: context, rawCallbackMachTime: now + 1)
+            XCTAssertNil(runtime.encoderOverlapNotBefore)
+        }
+    }
+
+    func testOverlapClockReplacesItsPendingWake() async {
+        let clock = LumenEncoderOverlapClock()
+        let stale = expectation(description: "superseded wake")
+        stale.isInverted = true
+        let current = expectation(description: "latest wake")
+        await clock.schedule(until: ContinuousClock().now.advanced(by: .milliseconds(40))) {
+            stale.fulfill()
+        }
+        await clock.schedule(until: ContinuousClock().now.advanced(by: .milliseconds(5))) {
+            current.fulfill()
+        }
+        await fulfillment(of: [current, stale], timeout: 0.1)
+    }
+
     func testSkyLightBackendIdentifiesDisplayStreamPath() {
         XCTAssertEqual(
             LumenVideoCaptureBackend.skyLightDisplayStream.rawValue,
