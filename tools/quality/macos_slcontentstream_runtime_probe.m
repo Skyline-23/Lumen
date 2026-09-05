@@ -25,7 +25,7 @@
                           update:(CGDisplayStreamUpdateRef)update dropCountOverride:(size_t)dropCount;
 @end
 
-// Reuse the existing SL creation implementation for this owned 1x diagnostic.
+// Reuse the existing SL creation implementation for this owned 4K diagnostic.
 // No product backend preference or private method ABI is changed here.
 @interface LumenMacVirtualDisplay (LumenProbeNativeColorBackend)
 - (BOOL)configureCGVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
@@ -43,16 +43,18 @@
     maximumBackingWidth:width maximumBackingHeight:height error:error];
 }
 - (BOOL)selectPublishedModeWithError:(NSError **)error {
-  // SL settings already select the preferred 1x mode. CGDisplaySetDisplayMode
-  // is not supported on this display class; require exact observed geometry.
+  // SL settings already select the preferred mode. CGDisplaySetDisplayMode
+  // is not supported on this display class; validate its observed backing size.
   CGDisplayModeRef mode=CGDisplayCopyDisplayMode(self.displayID);
+  BOOL logicalMatch=mode && ((CGDisplayModeGetWidth(mode)==3840 && CGDisplayModeGetHeight(mode)==2160) ||
+    (CGDisplayModeGetWidth(mode)==1920 && CGDisplayModeGetHeight(mode)==1080));
   BOOL valid=mode && self.usesSkyLightBackend && !CGDisplayIsMain(self.displayID) && !CGDisplayIsBuiltin(self.displayID) &&
-    CGDisplayModeGetWidth(mode)==3840 && CGDisplayModeGetHeight(mode)==2160 &&
+    logicalMatch &&
     CGDisplayModeGetPixelWidth(mode)==3840 && CGDisplayModeGetPixelHeight(mode)==2160 &&
     fabs(CGDisplayModeGetRefreshRate(mode)-120)<.01;
   if (mode) CGDisplayModeRelease(mode);
   if (!valid && error) *error=[NSError errorWithDomain:@"LumenNativeColor" code:22
-    userInfo:@{NSLocalizedDescriptionKey:@"SL owned display has not published exact 3840x2160 1x120 mode"}];
+    userInfo:@{NSLocalizedDescriptionKey:@"SL owned display has not published exact 3840x2160 backing120 mode at 1x or 2x"}];
   return valid;
 }
 @end
@@ -1185,13 +1187,14 @@ static NSString *LumenProbeValidateRGB10Conversion(CVPixelBufferRef source, CVPi
 // all cross-callback analysis belongs to LumenNativeColorProbe's Swift actor.
 static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue, NSString *requestedMatrix) {
   NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
+  CGFloat scale=screen.frame.size.width>0?3840/screen.frame.size.width:0;
   if (!screen || !LumenProbeOwnedDisplay || LumenProbeOwnedDisplay.displayID != displayID ||
       CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
       CGDisplayPixelsWide(displayID) != 3840 || CGDisplayPixelsHigh(displayID) != 2160 ||
-      screen.frame.size.width != 3840 || screen.frame.size.height != 2160) {
-    LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-requires-owned-4k-1x-display"}); return 22;
+      (scale != 1 && scale != 2) || screen.frame.size.height*scale != 2160) {
+    LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-requires-owned-4k-matched-scale-display"}); return 22;
   }
-  NSRect frame = NSMakeRect(NSMidX(screen.frame)-512,NSMidY(screen.frame)-256,1024,512);
+  NSRect frame = NSMakeRect(NSMidX(screen.frame)-512/scale,NSMidY(screen.frame)-256/scale,1024/scale,512/scale);
   NSPanel *panel = [[NSPanel alloc] initWithContentRect:frame
     styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel
     backing:NSBackingStoreBuffered defer:NO screen:screen];
@@ -1206,15 +1209,21 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   panel.opaque=YES; panel.hasShadow=NO; panel.ignoresMouseEvents=YES;
   panel.level=NSFloatingWindowLevel;
   panel.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorFullScreenAuxiliary;
-  NSView *view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,1024,512)];
-  view.wantsLayer=YES; view.layer.contentsFormat=kCAContentsFormatRGBA16Float;
+  NSView *view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,1024/scale,512/scale)];
+  view.wantsLayer=YES; view.layer.contentsScale=scale; view.layer.contentsFormat=kCAContentsFormatRGBA16Float;
   panel.contentView=view;
+  NSSize backing=[view convertSizeToBacking:view.bounds.size];
+  if (backing.width != 1024 || backing.height != 512) {
+    LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-patch-backing-size-mismatch",
+      @"backingSize":NSStringFromSize(backing)});return 22;
+  }
   const CGFloat patches[8][3]={{0,0,0},{.5,.5,.5},{.65,.65,.65},{.75,.75,.75},{.9,.9,.9},
     {.75,0,0},{0,.75,0},{0,0,.75}};
   CGColorSpaceRef colorSpace=CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ);
   if (!colorSpace) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-space"}); return 22; }
   for (size_t index=0; index<8; index++) {
-    CALayer *patch=[CALayer layer]; patch.frame=CGRectMake(index*128,0,128,512);
+    CALayer *patch=[CALayer layer]; patch.frame=CGRectMake(index*128/scale,0,128/scale,512/scale);
+    patch.contentsScale=scale;
     patch.contentsFormat=kCAContentsFormatRGBA16Float;
     patch.preferredDynamicRange=CADynamicRangeHigh;
     patch.toneMapMode=CAToneMapModeNever;
@@ -1313,6 +1322,8 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   result[@"screenPotentialEDRHeadroom"]=@(screen.maximumPotentialExtendedDynamicRangeColorComponentValue);
   result[@"screenReferenceEDRHeadroom"]=@(screen.maximumReferenceExtendedDynamicRangeColorComponentValue);
   result[@"virtualDisplayBackend"]=LumenProbeOwnedDisplay.usesSkyLightBackend?@"sl":@"cg";
+  result[@"logicalWidth"]=@(screen.frame.size.width);result[@"logicalHeight"]=@(screen.frame.size.height);
+  result[@"backingScale"]=@(scale);result[@"patchBackingSize"]=NSStringFromSize(backing);
   LumenProbePrintJSON(result);
   return [result[@"valid"] boolValue]?0:22;
 }
