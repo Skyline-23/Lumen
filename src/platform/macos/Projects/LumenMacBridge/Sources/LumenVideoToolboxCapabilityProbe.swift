@@ -9,7 +9,7 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:compareForwarder:initialBitrateForUpdate:sourceArrivalNanos:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:compareForwarder:initialBitrateForUpdate:sourceArrivalNanos:sourcePresentationNanos:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
@@ -18,6 +18,7 @@ public final class LumenEncoderReplayProbe: NSObject {
         compareForwarder: Bool,
         initialBitrateForUpdate: Int,
         sourceArrivalNanos: [NSNumber]?,
+        sourcePresentationNanos: [NSNumber]?,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
     ) {
@@ -29,6 +30,7 @@ public final class LumenEncoderReplayProbe: NSObject {
         let buffers = frames.map { $0 as! CVPixelBuffer }
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
         let arrivals = sourceArrivalNanos?.map(\.int64Value)
+        let presentations = sourcePresentationNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
             if initialBitrateForUpdate > 0 {
@@ -77,6 +79,28 @@ public final class LumenEncoderReplayProbe: NSObject {
                 let intervals = zip(offsets, offsets.dropFirst()).map { $1 - $0 }.sorted()
                 let period = offsets.last! + intervals[intervals.count / 2]
                 let count = offsets.count
+                if let presentations {
+                    guard presentations.count == count, presentations.first == 0,
+                          presentations.allSatisfy({ (0 ... 60_000_000_000).contains($0) }),
+                          zip(presentations, presentations.dropFirst()).allSatisfy({ $1 > $0 }) else {
+                        completion("{\"error\":\"source-presentation-trace-invalid\"}")
+                        return
+                    }
+                    // A single measured cycle avoids manufacturing a PTS seam
+                    // when actual display time leads/lags source arrival time.
+                    let matchedDuration = min(duration, Double(period) / 1e9)
+                    var results: [String] = []
+                    for actualPTS in [false, true, false] {
+                        results.append(await runner.run(
+                            fixture: fixture, width: width, height: height, hdr: hdr,
+                            bitrate: bitrate, duration: matchedDuration, periodicSeconds: 1,
+                            arrivalPattern: offsets, arrivalPeriod: period, arrivalKind: "measured",
+                            presentationPattern: actualPTS ? presentations : offsets
+                        ))
+                    }
+                    completion("{\"mode\":\"production-live-presentation-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+                    return
+                }
                 let uniform = (0 ..< count).map { Int64($0) * period / Int64(count) }
                 var results: [String] = []
                 for (kind, pattern) in [("uniform", uniform), ("measured", offsets), ("uniform", uniform)] {
@@ -323,7 +347,8 @@ private actor LumenEncoderReplayRunner {
              sourceFrameRate: Int = 120, arrivalPattern: [Int64]? = nil,
              arrivalPeriod: Int64 = 0, arrivalKind: String = "constant",
              metalStaging: Bool? = nil, forwarderRetention: Bool = false,
-             initialBitrateForUpdate: Int? = nil) async -> String {
+             initialBitrateForUpdate: Int? = nil,
+             presentationPattern: [Int64]? = nil) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let forwarder = forwarderRetention ? LumenVideoCaptureForwarder() : nil
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
@@ -427,10 +452,12 @@ private actor LumenEncoderReplayRunner {
             if let arrivalPattern {
                 var cycle: Int64 = 0
                 let limit = Int64(duration * 1e9)
-                while cycle < limit {
+                if presentationPattern != nil {
+                    schedule = arrivalPattern.filter { $0 < limit }
+                } else { while cycle < limit {
                     schedule.append(contentsOf: arrivalPattern.map { cycle + $0 }.filter { $0 < limit })
                     cycle += arrivalPeriod
-                }
+                } }
             } else {
                 schedule = (0 ..< Int(duration * Double(sourceFrameRate))).map {
                     Int64($0) * 1_000_000_000 / Int64(sourceFrameRate)
@@ -451,7 +478,7 @@ private actor LumenEncoderReplayRunner {
                     offered = due
                 }
                 let index = offered
-                let presentationNanos = schedule[index]
+                let presentationNanos = presentationPattern?[index] ?? schedule[index]
                 if initialBitrateForUpdate != nil, !didApplyRateUpdate,
                    presentationNanos >= 1_000_000_000 {
                     // Apply the exact live policy after real frames have entered
@@ -517,6 +544,8 @@ private actor LumenEncoderReplayRunner {
                     "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
                         : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
                     "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
+                    "presentationKind": presentationPattern == nil || presentationPattern == arrivalPattern
+                        ? "arrival" : "captured-display-pts",
                     "forwarderRetention": forwarderRetention,
                     "initialBitrateKbps": initialBitrateForUpdate ?? bitrate,
                     "measuredBitrateKbps": bitrate,

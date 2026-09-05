@@ -130,6 +130,8 @@ final class LumenScreenCaptureVideoRuntime:
     var liveSourceSlowWindows = 0
     var liveSourceArrivalOrigin: UInt64?
     var liveSourceArrivalOffsets: [UInt64] = []
+    var liveSourcePresentationOrigin: CMTime?
+    var liveSourcePresentationOffsets: [Int64] = []
 #endif
     var outputOccupancyTimings = LumenCaptureOutputOccupancyTimings()
     var sourceCallbackServiceTiming = LumenCaptureStageTimingAccumulator()

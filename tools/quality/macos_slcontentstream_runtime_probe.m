@@ -1063,7 +1063,9 @@ int main(int argc, const char *argv[]) {
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
     BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
     NSString *sourceArrivalPath = LumenProbeArgument(argc,argv,@"--source-arrival-file");
+    NSString *sourcePresentationPath = LumenProbeArgument(argc,argv,@"--source-presentation-file");
     NSArray<NSNumber *> *fileSourceArrivals = nil;
+    NSArray<NSNumber *> *fileSourcePresentations = nil;
     BOOL compareMetalStaging = LumenProbeHasFlag(argc,argv,@"--compare-metal-staging");
     BOOL compareForwarder = LumenProbeHasFlag(argc,argv,@"--compare-forwarder");
     NSString *initialBitrateArgument = LumenProbeArgument(argc,argv,@"--compare-initial-bitrate-kbps");
@@ -1072,6 +1074,9 @@ int main(int argc, const char *argv[]) {
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (sourcePresentationPath && !sourceArrivalPath) {
+      LumenProbePrintJSON(@{@"error":@"presentation-file-requires-paired-arrival-file"}); return 13;
+    }
     if (sourceArrivalPath) {
       if (!productionReplay || compareSourceJitter || compareMetalStaging || compareForwarder ||
           compareRawSourceLoad || initialBitrateArgument ||
@@ -1097,6 +1102,24 @@ int main(int argc, const char *argv[]) {
         previous = [value longLongValue];
       }
       fileSourceArrivals = parsed;
+      if (sourcePresentationPath) {
+        NSData *presentationData = [NSData dataWithContentsOfFile:sourcePresentationPath];
+        id presentation = presentationData.length > 0 && presentationData.length <= 200000
+          ? [NSJSONSerialization JSONObjectWithData:presentationData options:0 error:NULL] : nil;
+        if (![presentation isKindOfClass:[NSArray class]] || [presentation count] != fileSourceArrivals.count) {
+          LumenProbePrintJSON(@{@"error":@"source-presentation-file-invalid"}); return 13;
+        }
+        int64_t lastPresentation = -1;
+        for (id value in presentation) {
+          if (![value isKindOfClass:[NSNumber class]] || !isfinite([value doubleValue]) ||
+              [value doubleValue] < 0 || [value doubleValue] > 60000000000.0 ||
+              [value doubleValue] != (double)[value longLongValue] || [value longLongValue] <= lastPresentation) {
+            LumenProbePrintJSON(@{@"error":@"source-presentation-file-values-invalid"}); return 13;
+          }
+          lastPresentation = [value longLongValue];
+        }
+        fileSourcePresentations = presentation;
+      }
     }
     if (initialBitrateArgument && (!productionReplay || duration < 8 || targetBitrateKbps <= 0 ||
         initialBitrateForUpdate < targetBitrateKbps || compareForwarder || compareMetalStaging ||
@@ -1479,6 +1502,7 @@ int main(int argc, const char *argv[]) {
           compareForwarder:compareForwarder
           initialBitrateForUpdate:initialBitrateForUpdate
           sourceArrivalNanos:fileSourceArrivals ?: (compareSourceJitter ? [state.arrivalTimes copy] : nil)
+          sourcePresentationNanos:fileSourcePresentations
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];

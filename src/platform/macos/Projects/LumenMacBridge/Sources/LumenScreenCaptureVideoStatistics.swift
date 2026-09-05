@@ -234,6 +234,8 @@ extension LumenScreenCaptureVideoRuntime {
                 liveSourceSlowWindows = 0
                 liveSourceArrivalOrigin = nil
                 liveSourceArrivalOffsets.removeAll(keepingCapacity: true)
+                liveSourcePresentationOrigin = nil
+                liveSourcePresentationOffsets.removeAll(keepingCapacity: true)
             }
         }
 #endif
