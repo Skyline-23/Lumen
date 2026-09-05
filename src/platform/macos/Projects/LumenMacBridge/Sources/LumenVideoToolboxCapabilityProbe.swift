@@ -113,6 +113,20 @@ private actor LumenEncoderReplayRunner {
             )
             self.runtime = runtime
             _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
+            let encoderProperties: [String: Any] = runtime.encoderQueue.sync {
+                guard let session = runtime.compressionSession else { return [:] }
+                var values: [String: Any] = [:]
+                for key in ["ThroughputMode", "SupportedThroughputModes", "ConcurrentMode",
+                            "PreemptiveLoadBalancing", "MaximizePowerEfficiency", "InputQueueMaxCount",
+                            "EncoderUsage", "LookAheadFrames", "SVENum", "SVESchedMode",
+                            "MaxFrameDelayCount", "RealTime", "MaximumRealTimeFrameRate"] {
+                    var value: CFTypeRef?
+                    let status = VTSessionCopyProperty(session, key: key as CFString,
+                                                       allocator: nil, valueOut: &value)
+                    values[key] = ["status": status, "value": value ?? NSNull()]
+                }
+                return values
+            }
             runtime.queue.sync { runtime.statistics.isRunning = true }
             for buffer in fixture.buffers {
                 guard CVPixelBufferGetWidth(buffer) == width,
@@ -139,11 +153,10 @@ private actor LumenEncoderReplayRunner {
                 }
                 let index = offered
                 let displayTime = mach_absolute_time()
-                let buffer = fixture.buffers[index % fixture.buffers.count]
                 await withCheckedContinuation { continuation in
                     runtime.queue.async {
                         let source = runtime.makePendingSource(
-                            imageBuffer: buffer,
+                            imageBuffer: fixture.buffers[index % fixture.buffers.count],
                             presentationTime: CMTime(value: Int64(index), timescale: 120),
                             sourceDisplayTime: displayTime
                         )
@@ -176,6 +189,7 @@ private actor LumenEncoderReplayRunner {
                     "processingFailures": runtime.statistics.processingFailureCount,
                     "hdrValid": metrics.hdrValid && !metrics.latencies.isEmpty,
                     "keyFrames": metrics.keyFrames, "encodedBytes": metrics.bytes,
+                    "encoderProperties": encoderProperties,
                     "diagnostics": runtime.makeStatisticsNotes(width: width, height: height)
                 ]
             }
