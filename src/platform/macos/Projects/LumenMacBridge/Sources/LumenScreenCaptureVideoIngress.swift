@@ -133,7 +133,7 @@ extension LumenScreenCaptureVideoRuntime {
             sourcePresentationTime: submission.source.presentationTime,
             forceKeyFrame: submission.forceKeyFrame
         )
-        guard case .admit = admission else {
+        guard case .admit(let durationSeconds) = admission else {
             queue.async { [weak self] in
                 guard let self else { return }
                 switch admission {
@@ -172,10 +172,9 @@ extension LumenScreenCaptureVideoRuntime {
             compressionSession,
             imageBuffer: source.imageBuffer,
             presentationTimeStamp: source.presentationTime,
-            // A live newest-only source does not know when its successor
-            // will be admitted. Preserve its real PTS without labeling the
-            // previous inter-frame gap as this frame's future duration.
-            duration: .invalid,
+            duration: LumenAdaptiveVideoFrameTiming.cmTime(
+                seconds: durationSeconds
+            ),
             frameProperties: properties,
             sourceFrameRefcon: UnsafeMutableRawPointer(
                 bitPattern: UInt(source.sequenceNumber)
