@@ -221,25 +221,6 @@ extension LumenScreenCaptureVideoRuntime {
     }
 
     func logCompactPipelineTiming() {
-        if !stopping, encoderActivityWakeGate.observe(
-            sourceRate: captureCadenceTelemetry.sourceCallbacksPerSecond,
-            requestedRate: configuration.effectiveTargetFrameRate
-        ), let mode = configuredThroughputMode {
-            // Reassert the already-negotiated, runtime-advertised throughput
-            // mode once when motion resumes. No quality, rate, queue or codec
-            // change. The existing encoder queue owns all VT property writes.
-            encoderQueue.async { [weak self] in
-                guard let self, self.adaptiveVideoDeliveryPolicy.acceptsUpdates,
-                      let session = self.compressionSession else { return }
-                let status = VTSessionSetProperty(
-                    session, key: LumenVideoToolboxThroughputModeResolver.modePropertyKey(),
-                    value: mode as CFNumber
-                )
-                Self.pipelineLogger.notice(
-                    "stage=encoder-active-wake mode=\(mode, privacy: .public) status=\(status, privacy: .public)"
-                )
-            }
-        }
 #if DEBUG
         if recordsLiveSourceArrivals, liveSourceArrivalOffsets.count < 768 {
             // Diagnostic selection only: do not change production admission.
