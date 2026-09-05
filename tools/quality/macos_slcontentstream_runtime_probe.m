@@ -1093,6 +1093,27 @@ int main(int argc, const char *argv[]) {
     if (stimulus && (CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID))) {
       LumenProbePrintJSON(@{@"error":@"stimulus-requires-independent-display"}); return 12;
     }
+    if (LumenProbeHasFlag(argc, argv, @"--stimulus-only")) {
+      if (displayArgument == nil || !CGDisplayIsOnline(displayID) ||
+          CGDisplayIsBuiltin(displayID) || displayID == CGMainDisplayID() ||
+          LumenProbeScreenForDisplayID(displayID) == nil) {
+        LumenProbePrintJSON(@{@"error":@"stimulus-only-requires-explicit-online-nonmain-display"});
+        return 13;
+      }
+      [NSApplication sharedApplication];
+      [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+      [NSApp finishLaunching];
+      LumenProbeStimulus *motion = [[LumenProbeStimulus alloc] initWithDisplayID:displayID];
+      [motion start];
+      LumenProbeRunApplicationForDuration(duration);
+      [motion stop];
+      NSMutableDictionary *result = [[motion metrics] mutableCopy];
+      result[@"mode"] = @"stimulus-only-no-capture";
+      result[@"displayID"] = @(displayID);
+      result[@"screenFrame"] = NSStringFromRect(LumenProbeScreenForDisplayID(displayID).frame);
+      LumenProbePrintJSON(result);
+      return 0;
+    }
     NSString *pixelFormatArgument = LumenProbeArgument(
       argc,
       argv,
