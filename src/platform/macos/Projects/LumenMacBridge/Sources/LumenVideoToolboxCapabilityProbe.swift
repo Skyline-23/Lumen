@@ -9,10 +9,10 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
-        duration: Double, completion: @escaping @Sendable (String) -> Void
+        duration: Double, comparePeriodic: Bool, completion: @escaping @Sendable (String) -> Void
     ) {
         guard frames.count > 0, frames.count <= 32, width > 0, height > 0,
               duration.isFinite, (1 ... 60).contains(duration), bitrate > 0 else {
@@ -23,10 +23,21 @@ public final class LumenEncoderReplayProbe: NSObject {
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
         Task {
             let runner = LumenEncoderReplayRunner()
-            completion(await runner.run(
-                fixture: fixture, width: width, height: height,
-                hdr: hdr, bitrate: bitrate, duration: duration
-            ))
+            if comparePeriodic {
+                var results: [String] = []
+                for interval in [1, 4, 1] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: interval
+                    ))
+                }
+                completion("{\"mode\":\"production-periodic-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else {
+                completion(await runner.run(
+                    fixture: fixture, width: width, height: height,
+                    hdr: hdr, bitrate: bitrate, duration: duration, periodicSeconds: 1
+                ))
+            }
         }
     }
 }
@@ -70,7 +81,7 @@ private actor LumenEncoderReplayRunner {
     }
 
     func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
-             hdr: Bool, bitrate: Int, duration: Double) async -> String {
+             hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         do {
             let configuration = LumenMacCaptureConfiguration(
@@ -141,7 +152,7 @@ private actor LumenEncoderReplayRunner {
                     }
                 }
                 offered += 1
-                if offered % 120 == 0 { _ = await runtime.requestPeriodicKeyFrame() }
+                if offered % (120 * periodicSeconds) == 0 { _ = await runtime.requestPeriodicKeyFrame() }
             }
             await runtime.stop()
             let elapsed = start.duration(to: clock.now)
@@ -153,7 +164,8 @@ private actor LumenEncoderReplayRunner {
                     return sorted[min(Int(ceil(Double(sorted.count - 1) * p)), sorted.count - 1)]
                 }
                 return [
-                    "mode": "production-encoder-immutable-replay", "outputFPS": Double(metrics.latencies.count) / seconds,
+                    "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
+                    "outputFPS": Double(metrics.latencies.count) / seconds,
                     "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
                     "callbackP50Milliseconds": percentile(metrics.latencies, 0.5),

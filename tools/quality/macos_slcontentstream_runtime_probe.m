@@ -1278,10 +1278,11 @@ int main(int argc, const char *argv[]) {
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         __block NSString *output;
         [LumenEncoderReplayProbe runWithFrames:replayFrames width:outputWidth height:outputHeight
-          hdr:hdr bitrate:targetBitrateKbps duration:duration completion:^(NSString *json) {
+          hdr:hdr bitrate:targetBitrateKbps duration:duration
+          comparePeriodic:LumenProbeHasFlag(argc,argv,@"--compare-periodic") completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];
-        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration+30];
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration*3+30];
         while (dispatch_semaphore_wait(done,DISPATCH_TIME_NOW) != 0) {
           if (deadline.timeIntervalSinceNow <= 0) {
             LumenProbePrintJSON(@{@"error":@"production-replay-timeout"}); return 17;
@@ -1290,6 +1291,11 @@ int main(int argc, const char *argv[]) {
         }
         fprintf(stdout,"%s\n",output.UTF8String);
         NSDictionary *result = [NSJSONSerialization JSONObjectWithData:[output dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+        if (result[@"comparisons"]) {
+          for (NSDictionary *row in result[@"comparisons"])
+            if (row[@"error"] || ![row[@"hdrValid"] boolValue] || [row[@"processingFailures"] intValue] != 0) return 18;
+          return 0;
+        }
         return result && !result[@"error"] && [result[@"hdrValid"] boolValue] &&
           [result[@"processingFailures"] intValue] == 0 ? 0 : 18;
       }
