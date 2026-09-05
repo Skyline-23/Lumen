@@ -9,11 +9,12 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:sourceArrivalNanos:sourceLoadController:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:compareDecoderLoad:compareSourceCadence:compareMetalStaging:sourceArrivalNanos:sourceLoadController:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, comparePeriodic: Bool, compareOverlap: Bool, compareDecoderLoad: Bool,
         compareSourceCadence: Bool,
+        compareMetalStaging: Bool,
         sourceArrivalNanos: [NSNumber]?,
         sourceLoadController: (@Sendable (Bool) -> NSDictionary)?,
         completion: @escaping @Sendable (String) -> Void
@@ -28,7 +29,17 @@ public final class LumenEncoderReplayProbe: NSObject {
         let arrivals = sourceArrivalNanos?.map(\.int64Value)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if let arrivals {
+            if compareMetalStaging {
+                var results: [String] = []
+                for enabled in [false, true, false] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        metalStaging: enabled
+                    ))
+                }
+                completion("{\"mode\":\"production-metal-staging-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if let arrivals {
                 guard arrivals.count >= 120, arrivals.count <= 10_000,
                       zip(arrivals, arrivals.dropFirst()).allSatisfy({ $1 > $0 }),
                       let first = arrivals.first, let last = arrivals.last,
@@ -282,7 +293,8 @@ private actor LumenEncoderReplayRunner {
              hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int,
              overlapEnabled: Bool = true, decoderLoad: Bool = false,
              sourceFrameRate: Int = 120, arrivalPattern: [Int64]? = nil,
-             arrivalPeriod: Int64 = 0, arrivalKind: String = "constant") async -> String {
+             arrivalPeriod: Int64 = 0, arrivalKind: String = "constant",
+             metalStaging: Bool? = nil) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         let (decodeInput, decodeContinuation) = AsyncStream<LumenReplayCompressedSample>
             .makeStream(bufferingPolicy: .bufferingOldest(4))
@@ -325,6 +337,20 @@ private actor LumenEncoderReplayRunner {
             )
             self.runtime = runtime
             _ = try await runtime.prepareVideoCapture(sourceWidth: width, sourceHeight: height)
+            if metalStaging == true {
+                try runtime.prepareSkyLightMetalStaging(
+                    width: width, height: height,
+                    pixelFormat: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+                        : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                )
+                // Diagnostic identity only: no additional capture stream is started.
+                // Exercise the existing product lease/blit/completion/admission path.
+                try runtime.queue.sync {
+                    runtime.skyLightDisplayStreamIdentity = 1
+                    runtime.outputOwnership.registerScreenOutput(streamIdentity: 1)
+                    try runtime.outputOwnership.markCaptureStarted(streamIdentity: 1)
+                }
+            }
             let encoderProperties: [String: Any] = runtime.encoderQueue.sync {
                 guard let session = runtime.compressionSession else { return [:] }
                 var values: [String: Any] = [:]
@@ -388,9 +414,20 @@ private actor LumenEncoderReplayRunner {
                 let displayTime = mach_absolute_time()
                 await withCheckedContinuation { continuation in
                     runtime.queue.async {
+                        if metalStaging == true {
+                            runtime.processSkyLightFrame(
+                                status: .frameComplete, displayTime: displayTime,
+                                pixelBuffer: fixture.buffers[index % fixture.buffers.count],
+                                pixelBufferStatus: kCVReturnSuccess
+                            )
+                            continuation.resume()
+                            return
+                        }
                         let source = runtime.makePendingSource(
                             imageBuffer: fixture.buffers[index % fixture.buffers.count],
-                            presentationTime: CMTime(value: presentationNanos, timescale: 1_000_000_000),
+                            presentationTime: metalStaging == nil
+                                ? CMTime(value: presentationNanos, timescale: 1_000_000_000)
+                                : runtime.resolvedSkyLightPresentationTime(displayTime: displayTime),
                             sourceDisplayTime: displayTime
                         )
                         runtime.admitPendingSource(source)
@@ -420,6 +457,23 @@ private actor LumenEncoderReplayRunner {
                     "sourceFrameRate": arrivalPattern == nil ? Double(sourceFrameRate)
                         : Double(arrivalPattern!.count) * 1e9 / Double(arrivalPeriod),
                     "negotiatedFrameRate": 120, "arrivalKind": arrivalKind,
+                    "metalStaging": metalStaging == true,
+                    "metalSubmitted": runtime.skyLightMetalStageSubmissionCount,
+                    "metalCompleted": runtime.skyLightMetalStageCompletionCount,
+                    "metalBusyDrops": runtime.skyLightMetalStageBusyDropCount,
+                    "metalPoolFailures": runtime.skyLightMetalStagePoolAllocationFailureCount,
+                    "metalTextureFailures": runtime.skyLightMetalStageTextureFailureCount,
+                    "metalCommandFailures": runtime.skyLightMetalStageCommandBufferFailureCount,
+                    "metalValidationFailures": runtime.skyLightMetalStageValidationFailureCount,
+                    "metalValid": metalStaging != true || (
+                        runtime.skyLightMetalStageSubmissionCount > 0 &&
+                        runtime.skyLightMetalStageSubmissionCount == runtime.skyLightMetalStageCompletionCount &&
+                        runtime.skyLightMetalStageBusyDropCount == 0 &&
+                        runtime.skyLightMetalStagePoolAllocationFailureCount == 0 &&
+                        runtime.skyLightMetalStageTextureFailureCount == 0 &&
+                        runtime.skyLightMetalStageCommandBufferFailureCount == 0 &&
+                        runtime.skyLightMetalStageValidationFailureCount == 0
+                    ),
                     "overlapEnabled": overlapEnabled,
                     "decoderLoad": decoderLoad, "decoder": decodeResult,
                     "decodeInputDrops": metrics.decodeInputDrops,

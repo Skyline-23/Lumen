@@ -1008,10 +1008,19 @@ int main(int argc, const char *argv[]) {
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
     BOOL productionReplay = LumenProbeHasFlag(argc,argv,@"--production-replay");
     BOOL compareSourceJitter = LumenProbeHasFlag(argc,argv,@"--compare-source-jitter");
+    BOOL compareMetalStaging = LumenProbeHasFlag(argc,argv,@"--compare-metal-staging");
     BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (compareMetalStaging && (!productionReplay || compareSourceJitter || compareRawSourceLoad ||
+        LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-source-cadence") ||
+        LumenProbeHasFlag(argc,argv,@"--compare-decoder-load"))) {
+      LumenProbePrintJSON(@{@"error":@"metal-staging-requires-exclusive-production-replay"});
+      return 13;
+    }
     if (compareSourceJitter && (!productionReplay || !stimulus || useSCK || compareRawSourceLoad ||
         LumenProbeHasFlag(argc,argv,@"--compare-periodic") ||
         LumenProbeHasFlag(argc,argv,@"--compare-overlap") ||
@@ -1334,6 +1343,7 @@ int main(int argc, const char *argv[]) {
           compareOverlap:LumenProbeHasFlag(argc,argv,@"--compare-overlap")
           compareDecoderLoad:LumenProbeHasFlag(argc,argv,@"--compare-decoder-load")
           compareSourceCadence:LumenProbeHasFlag(argc,argv,@"--compare-source-cadence")
+          compareMetalStaging:compareMetalStaging
           sourceArrivalNanos:compareSourceJitter ? [state.arrivalTimes copy] : nil
           sourceLoadController:sourceLoadController completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
@@ -1353,6 +1363,7 @@ int main(int argc, const char *argv[]) {
             if (row[@"error"] || ![row[@"hdrValid"] boolValue] ||
                 ![row[@"decoderValid"] boolValue] ||
                 (row[@"rawSourceValid"] && ![row[@"rawSourceValid"] boolValue]) ||
+                (row[@"metalValid"] && ![row[@"metalValid"] boolValue]) ||
                 [row[@"processingFailures"] intValue] != 0) return 18;
           return 0;
         }
