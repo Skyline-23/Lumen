@@ -97,6 +97,12 @@ private final class LumenEncoderReplayMetrics: @unchecked Sendable {
 
 private struct LumenReplayCompressedSample: @unchecked Sendable {
     let value: CMSampleBuffer
+    let acknowledgeAfterDecode: Bool
+}
+
+private final class LumenReplayDecodeAcknowledgement: Sendable {
+    let acknowledge: @Sendable () -> Void
+    init(_ acknowledge: @escaping @Sendable () -> Void) { self.acknowledge = acknowledge }
 }
 
 private final class LumenReplayDecodeCallback: Sendable {
@@ -113,7 +119,8 @@ private final class LumenReplayDecodeCallback: Sendable {
 /// The actor serializes the VT API; its callback only yields a validation bit.
 private actor LumenReplayDecoderLoad {
     func run(_ input: AsyncStream<LumenReplayCompressedSample>,
-             pixelFormat: OSType) async -> [String: Int] {
+             pixelFormat: OSType,
+             acknowledge: @escaping @Sendable () -> Void) async -> [String: Int] {
         let (outputs, continuation) = AsyncStream<Bool>.makeStream()
         let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat)
         let collector = Task {
@@ -135,13 +142,19 @@ private actor LumenReplayDecoderLoad {
                     continue
                 }
                 var record = VTDecompressionOutputCallbackRecord(
-                    decompressionOutputCallback: { refcon, _, status, _, image, _, _ in
+                    decompressionOutputCallback: { refcon, frameRefcon, status, _, image, _, _ in
+                        let acknowledgement = frameRefcon.map {
+                            Unmanaged<LumenReplayDecodeAcknowledgement>
+                                .fromOpaque($0).takeRetainedValue()
+                        }
                         guard let refcon else { return }
                         let context = Unmanaged<LumenReplayDecodeCallback>
                             .fromOpaque(refcon).takeUnretainedValue()
-                        context.output.yield(status == noErr && image.map {
+                        let valid = status == noErr && image.map {
                             CVPixelBufferGetPixelFormatType($0) == context.pixelFormat
-                        } == true)
+                        } == true
+                        context.output.yield(valid)
+                        if valid { acknowledgement?.acknowledge() }
                     },
                     decompressionOutputRefCon: Unmanaged.passUnretained(callback).toOpaque()
                 )
@@ -162,10 +175,18 @@ private actor LumenReplayDecoderLoad {
                                         value: kCFBooleanTrue) != noErr { failures += 1 }
             }
             guard let session else { failures += 1; continue }
+            let acknowledgement = sample.acknowledgeAfterDecode
+                ? Unmanaged.passRetained(LumenReplayDecodeAcknowledgement(acknowledge)).toOpaque()
+                : nil
             let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample.value,
                 flags: [._EnableAsynchronousDecompression, ._1xRealTimePlayback],
-                frameRefcon: nil, infoFlagsOut: nil)
-            if status == noErr { submitted += 1 } else { failures += 1 }
+                frameRefcon: acknowledgement, infoFlagsOut: nil)
+            if status == noErr { submitted += 1 } else {
+                failures += 1
+                if let acknowledgement {
+                    Unmanaged<LumenReplayDecodeAcknowledgement>.fromOpaque(acknowledgement).release()
+                }
+            }
         }
         if let session {
             if VTDecompressionSessionWaitForAsynchronousFrames(session) != noErr { failures += 1 }
@@ -196,7 +217,8 @@ private actor LumenEncoderReplayRunner {
             .makeStream(bufferingPolicy: .bufferingOldest(4))
         let decodeTask = decoderLoad ? Task {
             await LumenReplayDecoderLoad().run(decodeInput,
-                pixelFormat: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                pixelFormat: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                acknowledge: { Task { await self.acknowledge() } })
         } : nil
         do {
             let configuration = LumenMacCaptureConfiguration(
@@ -221,9 +243,10 @@ private actor LumenEncoderReplayRunner {
                 callbacks: .init(frameHandler: { [self] frame in
                     metrics.record(frame, requiresHDR: hdr)
                     if decoderLoad, case .dropped = decodeContinuation.yield(
-                        LumenReplayCompressedSample(value: frame.sampleBuffer)
+                        LumenReplayCompressedSample(value: frame.sampleBuffer,
+                            acknowledgeAfterDecode: frame.requiresBootstrapAcknowledgement)
                     ) { metrics.decodeInputDrops += 1 }
-                    if frame.requiresBootstrapAcknowledgement {
+                    if frame.requiresBootstrapAcknowledgement && !decoderLoad {
                         Task { await acknowledge() }
                     }
                 }, eventHandler: nil),
