@@ -916,7 +916,14 @@ int main(int argc, const char *argv[]) {
       NSError *error;
       LumenProbeOwnedDisplay = [[LumenMacVirtualDisplay alloc] initWithConfiguration:configuration error:&error];
       atexit(LumenProbeDestroyOwnedDisplay);
-      if (!LumenProbeOwnedDisplay || ![LumenProbeOwnedDisplay selectPublishedModeWithError:&error]) {
+      // WindowServer publishes modes asynchronously after creation.
+      BOOL selected = NO;
+      for (NSUInteger attempt = 0; LumenProbeOwnedDisplay && attempt < 20; attempt++) {
+        LumenProbeRunApplicationForDuration(.1);
+        selected = [LumenProbeOwnedDisplay selectPublishedModeWithError:&error];
+        if (selected) break;
+      }
+      if (!selected) {
         LumenProbePrintJSON(@{@"error":@"isolated-display-create-failed",@"message":error.localizedDescription ?: @"unknown"}); return 10;
       }
       displayID = LumenProbeOwnedDisplay.displayID;
