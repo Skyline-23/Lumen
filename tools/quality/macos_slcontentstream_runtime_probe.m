@@ -1192,7 +1192,7 @@ static BOOL LumenProbeBackingSizeMatches(CGDirectDisplayID displayID,size_t widt
   return matches;
 }
 
-static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue, NSString *requestedMatrix) {
+static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t callbackQueue, NSString *requestedMatrix, BOOL useSCKReference) {
   NSScreen *screen = LumenProbeScreenForDisplayID(displayID);
   CGFloat scale=screen.frame.size.width>0?3840/screen.frame.size.width:0;
   if (!screen || !LumenProbeOwnedDisplay || LumenProbeOwnedDisplay.displayID != displayID ||
@@ -1242,10 +1242,15 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
     patch.backgroundColor=color; CGColorRelease(color); [view.layer addSublayer:patch];
   }
   CGColorSpaceRelease(colorSpace);
+  // A tiny heartbeat outside sample centers requests fresh reference frames
+  // without changing any measured patch. This is not an FPS stimulus/metric.
+  CALayer *heartbeat=[CALayer layer];heartbeat.frame=CGRectMake(0,0,4/scale,4/scale);
+  [view.layer addSublayer:heartbeat];
   [panel orderFrontRegardless]; [panel displayIfNeeded];
   LumenProbeRunApplicationForDuration(1);
   LumenNativeColorProbe *probe=[LumenNativeColorProbe new];
   NSMutableArray<LumenMacSkyLightDisplayStream *> *streams=[NSMutableArray array];
+  LumenProbeSCKSource *sckReference=nil;
   // These counters are isolated to the existing serial C callback queue. Main
   // reads them only after stop and a queue barrier; no new coordination queue.
   __block NSUInteger sampleCount=0;
@@ -1297,6 +1302,14 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
       [probe recordWithRGB:rgb codes:codes spread:maximumSpread valid:valid
         transfer:tag(kCVImageBufferTransferFunctionKey) primaries:tag(kCVImageBufferColorPrimariesKey) matrix:tag(kCVImageBufferYCbCrMatrixKey)];
     };
+    if (!rgb && useSCKReference) {
+      sckReference=[LumenProbeSCKSource new];sckReference.handler=handler;
+      NSError *error=nil;
+      if (![sckReference startDisplay:displayID width:3840 height:2160 hdr:YES queue:callbackQueue error:&error]) {
+        started=NO;startFailure=error.localizedDescription?:@"sck-hdr-reference-start";
+      }
+      break;
+    }
     LumenMacSkyLightDisplayStream *stream=[[LumenMacSkyLightDisplayStream alloc]
       initWithDisplayID:displayID outputWidth:3840 outputHeight:2160 pixelFormat:format minimumFrameTime:0
       queueDepth:2 showCursor:NO yCbCrMatrix:requestedMatrix dynamicRangeMode:2
@@ -1306,11 +1319,16 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
     [streams addObject:stream];
   }
   if (started) {
-    dispatch_sync(callbackQueue,^{ samplingStart=clock_gettime_nsec_np(CLOCK_UPTIME_RAW)+NSEC_PER_SEC; });
-    LumenProbeRunApplicationForDuration(4);
+    dispatch_sync(callbackQueue,^{ samplingStart=clock_gettime_nsec_np(CLOCK_UPTIME_RAW)+2*NSEC_PER_SEC; });
+    for (NSUInteger tick=0;tick<24;tick++) {
+      [CATransaction begin];[CATransaction setDisableActions:YES];
+      heartbeat.backgroundColor=(tick%2?[NSColor whiteColor]:[NSColor blackColor]).CGColor;
+      [CATransaction commit];LumenProbeRunApplicationForDuration(.25);
+    }
   }
   NSMutableArray *stops=[NSMutableArray array];
   for (LumenMacSkyLightDisplayStream *stream in streams) [stops addObject:@([stream stop])];
+  if (sckReference) [stops addObject:@([sckReference stop])];
   dispatch_sync(callbackQueue,^{});
   [panel orderOut:nil];
   dispatch_semaphore_t done=dispatch_semaphore_create(0); __block NSString *json;
@@ -1325,6 +1343,7 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   result[@"displayID"]=@(displayID);result[@"width"]=@3840;result[@"height"]=@2160;
   result[@"requestedGrayPQ"]=@[@0,@.5,@.65,@.75,@.9];
   result[@"requestedMatrix"]=requestedMatrix;
+  result[@"p010Backend"]=useSCKReference?@"sck-hdr-canonical":@"raw-skylight";
   result[@"screenEDRHeadroom"]=@(screen.maximumExtendedDynamicRangeColorComponentValue);
   result[@"screenPotentialEDRHeadroom"]=@(screen.maximumPotentialExtendedDynamicRangeColorComponentValue);
   result[@"screenReferenceEDRHeadroom"]=@(screen.maximumReferenceExtendedDynamicRangeColorComponentValue);
@@ -1753,7 +1772,8 @@ int main(int argc, const char *argv[]) {
     BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
     BOOL inspectNativeColor = LumenProbeHasFlag(argc,argv,@"--inspect-native-color");
     BOOL nativeColorSLDisplay=LumenProbeHasFlag(argc,argv,@"--native-color-sl-display");
-    if (nativeColorSLDisplay && !inspectNativeColor) {
+    BOOL nativeColorSCKReference=LumenProbeHasFlag(argc,argv,@"--native-color-sck-reference");
+    if ((nativeColorSLDisplay || nativeColorSCKReference) && !inspectNativeColor) {
       LumenProbePrintJSON(@{@"valid":@NO,@"error":@"sl-display-selector-only-native-color-diagnostic"}); return 22;
     }
     NSString *nativeColorMatrix=LumenProbeArgument(argc,argv,@"--native-color-matrix");
@@ -2034,7 +2054,7 @@ int main(int argc, const char *argv[]) {
         requestedMatrix=constantValues[@"kCGDisplayStreamYCbCrMatrix_ITU_R_709_2"];
         if (!requestedMatrix) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"cg709constant-unavailable"});return 22; }
       }
-      return LumenProbeNativeColor(displayID,callbackQueue,requestedMatrix);
+      return LumenProbeNativeColor(displayID,callbackQueue,requestedMatrix,nativeColorSCKReference);
     }
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
     NSString *encoderMode = LumenProbeArgument(argc,argv,@"--encoder-mode");
