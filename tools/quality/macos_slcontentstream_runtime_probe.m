@@ -5,6 +5,7 @@
 #import <IOSurface/IOSurface.h>
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <VideoToolbox/VideoToolbox.h>
 #import <mach/mach_time.h>
 
 #import "LumenMacBridge.h"
@@ -81,9 +82,9 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
     width,
     height
   );
-  _window = [[NSWindow alloc]
+  _window = [[NSPanel alloc]
     initWithContentRect:frame
-              styleMask:NSWindowStyleMaskBorderless
+              styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                 backing:NSBackingStoreBuffered
                   defer:NO
                  screen:screen];
@@ -117,7 +118,6 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
 - (void)start {
   [_window orderFrontRegardless];
   [_window displayIfNeeded];
-  [NSApp activateIgnoringOtherApps:YES];
   _displayLink = [_window displayLinkWithTarget:self
                                        selector:@selector(displayLinkTick:)];
   _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(
@@ -696,6 +696,168 @@ static int LumenProbeRunProductionPipeline(
     : 9;
 }
 
+// The existing capture callback queue owns this diagnostic state. VT callbacks
+// return to that queue; no new coordination queue or lock is introduced.
+@interface LumenProbeEncoder : NSObject
+- (instancetype)initWithQueue:(dispatch_queue_t)queue width:(int)width height:(int)height
+                         hdr:(BOOL)hdr bitrate:(int)bitrate lowLatency:(BOOL)lowLatency;
+- (void)accept:(CVPixelBufferRef)buffer displayTime:(uint64_t)displayTime;
+- (NSDictionary *)finish;
+@property(nonatomic, readonly) BOOL ready;
+@end
+
+@implementation LumenProbeEncoder {
+  dispatch_queue_t _queue;
+  VTCompressionSessionRef _session;
+  NSMutableDictionary *_properties;
+  NSMutableArray<NSNumber *> *_latencies;
+  NSMutableArray *_recoverySamples;
+  uint64_t _submitted, _outputs, _busyDrops, _errors, _idrs, _bytes;
+  uint64_t _start, _end;
+  NSUInteger _inflight;
+  BOOL _lowLatency, _hdr, _validHDR, _ready;
+}
+@synthesize ready = _ready;
+- (instancetype)initWithQueue:(dispatch_queue_t)queue width:(int)width height:(int)height
+                         hdr:(BOOL)hdr bitrate:(int)bitrate lowLatency:(BOOL)lowLatency {
+  self = [super init];
+  if (!self) return nil;
+  _queue = queue; _lowLatency = lowLatency; _hdr = hdr; _validHDR = YES;
+  _properties = [NSMutableDictionary dictionary];
+  _latencies = [NSMutableArray array]; _recoverySamples = [NSMutableArray array];
+  NSMutableDictionary *spec = [@{(__bridge id)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:@YES} mutableCopy];
+  if (lowLatency) spec[(__bridge id)kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = @YES;
+  OSType pixelFormat = hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  OSStatus status = VTCompressionSessionCreate(NULL,width,height,kCMVideoCodecType_HEVC,
+    (__bridge CFDictionaryRef)spec,(__bridge CFDictionaryRef)@{(__bridge id)kCVPixelBufferPixelFormatTypeKey:@(pixelFormat)},
+    NULL,NULL,NULL,&_session);
+  _properties[@"create"] = @(status);
+  if (status != noErr) return self;
+  NSDictionary *properties = @{
+    (__bridge id)kVTCompressionPropertyKey_RealTime:@YES,
+    (__bridge id)kVTCompressionPropertyKey_AllowFrameReordering:@NO,
+    (__bridge id)kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality:@YES,
+    (__bridge id)kVTCompressionPropertyKey_ExpectedFrameRate:@120,
+    (__bridge id)kVTCompressionPropertyKey_AverageBitRate:@((int64_t)bitrate*1000),
+    (__bridge id)kVTCompressionPropertyKey_DataRateLimits:@[@((int64_t)bitrate*1000/8),@1],
+    (__bridge id)kVTCompressionPropertyKey_ProfileLevel:(__bridge id)(hdr ? kVTProfileLevel_HEVC_Main10_AutoLevel : kVTProfileLevel_HEVC_Main_AutoLevel),
+    (__bridge id)kVTCompressionPropertyKey_ColorPrimaries:(__bridge id)(hdr ? kCMFormatDescriptionColorPrimaries_ITU_R_2020 : kCMFormatDescriptionColorPrimaries_ITU_R_709_2),
+    (__bridge id)kVTCompressionPropertyKey_TransferFunction:(__bridge id)(hdr ? kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ : kCMFormatDescriptionTransferFunction_ITU_R_709_2),
+    (__bridge id)kVTCompressionPropertyKey_YCbCrMatrix:(__bridge id)(hdr ? kCMFormatDescriptionYCbCrMatrix_ITU_R_2020 : kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2)
+  };
+  BOOL requiredPassed = YES;
+  for (NSString *key in properties) {
+    status = VTSessionSetProperty(_session,(__bridge CFStringRef)key,(__bridge CFTypeRef)properties[key]);
+    _properties[key] = @(status);
+    if (status != noErr) requiredPassed = NO;
+  }
+  status = VTSessionSetProperty(_session,kVTCompressionPropertyKey_AllowOpenGOP,kCFBooleanFalse);
+  _properties[@"AllowOpenGOP"] = @(status);
+  if (!lowLatency && status != noErr) requiredPassed = NO;
+  _properties[@"MaxFrameDelayCount"] = @(VTSessionSetProperty(_session,kVTCompressionPropertyKey_MaxFrameDelayCount,(__bridge CFNumberRef)@1));
+  status = VTCompressionSessionPrepareToEncodeFrames(_session);
+  _properties[@"prepare"] = @(status);
+  _ready = requiredPassed && status == noErr;
+  return self;
+}
+- (void)accept:(CVPixelBufferRef)buffer displayTime:(uint64_t)displayTime {
+  if (!_ready) return;
+  if (_inflight >= 2) { _busyDrops++; return; }
+  LumenMacSkyLightDisplayStreamFrameLease *lease = [LumenMacSkyLightDisplayStreamFrameLease leaseWithPixelBuffer:buffer];
+  if (!lease) { _errors++; return; }
+  uint64_t started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  if (!_start) _start = started;
+  BOOL force = (_submitted % 120) == 0;
+  CMTime pts = CMTimeMake(_submitted++,120);
+  _inflight++;
+  OSStatus status = VTCompressionSessionEncodeFrameWithOutputHandler(_session,buffer,pts,CMTimeMake(1,120),
+    (__bridge CFDictionaryRef)@{(__bridge id)kVTEncodeFrameOptionKey_ForceKeyFrame:@(force)},NULL,
+    ^(OSStatus result, VTEncodeInfoFlags flags, CMSampleBufferRef sample) {
+      uint64_t callback = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+      if (sample) CFRetain(sample);
+      dispatch_async(self->_queue, ^{
+        (void)lease; // Keep compositor ownership through the actual VT callback.
+        self->_inflight--;
+        if (result != noErr || !sample || (flags & kVTEncodeInfo_FrameDropped)) {
+          self->_errors++;
+        } else {
+          self->_outputs++; self->_end = callback;
+          [self->_latencies addObject:@((callback-started)/1e6)];
+          CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample);
+          size_t count = CMBlockBufferGetDataLength(block);
+          self->_bytes += count;
+          NSMutableData *data = [NSMutableData dataWithLength:count];
+          CMBlockBufferCopyDataBytes(block,0,count,data.mutableBytes);
+          const uint8_t *p = data.bytes;
+          BOOL idr = NO;
+          for (size_t offset=0; offset+6<=count;) {
+            uint32_t length = ((uint32_t)p[offset]<<24)|((uint32_t)p[offset+1]<<16)|((uint32_t)p[offset+2]<<8)|p[offset+3];
+            if (length < 2 || length > count-offset-4) { self->_errors++; break; }
+            uint8_t type = (p[offset+4]>>1)&63;
+            idr |= type == 19 || type == 20;
+            offset += 4+length;
+          }
+          if (idr) { self->_idrs++; [self->_recoverySamples removeAllObjects]; }
+          if (self->_idrs > 1 && self->_recoverySamples.count < 3)
+            [self->_recoverySamples addObject:(__bridge id)sample];
+          CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
+          if (self->_hdr) {
+            CFTypeRef transfer = CMFormatDescriptionGetExtension(format,kCMFormatDescriptionExtension_TransferFunction);
+            self->_validHDR &= transfer && CFEqual(transfer,kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ);
+          }
+        }
+        if (sample) CFRelease(sample);
+      });
+    });
+  if (status != noErr) { _inflight--; _errors++; }
+}
+- (NSDictionary *)finish {
+  if (!_session) return @{@"encoderReady":@NO,@"encoderProperties":_properties};
+  VTCompressionSessionCompleteFrames(_session,kCMTimeInvalid);
+  __block NSDictionary *result;
+  __block NSArray *samples;
+  dispatch_sync(_queue, ^{
+    double seconds = (self->_end-self->_start)/1e9;
+    result = @{@"encoderReady":@(self->_ready),@"encoderLowLatency":@(self->_lowLatency),
+      @"encoderProperties":self->_properties,@"encoderOutputCount":@(self->_outputs),
+      @"encoderSubmissionCount":@(self->_submitted),@"encoderBusyDrops":@(self->_busyDrops),
+      @"encoderErrors":@(self->_errors),@"encoderIDRCount":@(self->_idrs),@"encoderBytes":@(self->_bytes),
+      @"encoderOutputFPS":@(seconds>0 ? self->_outputs/seconds : 0),@"encoderHDRTransferValid":@(self->_validHDR && self->_outputs>0),
+      @"encoderCallbackP50Milliseconds":@(LumenProbePercentile(self->_latencies,.5)),
+      @"encoderCallbackP95Milliseconds":@(LumenProbePercentile(self->_latencies,.95))};
+    samples = [self->_recoverySamples copy];
+  });
+  VTCompressionSessionInvalidate(_session); CFRelease(_session); _session = NULL;
+  // Decode a later IDR and its successors in a fresh hardware-required session.
+  __block NSUInteger decoded = 0;
+  OSStatus decodeStatus = -1;
+  if (samples.count == 3) {
+    VTDecompressionSessionRef decoder = NULL;
+    decodeStatus = VTDecompressionSessionCreate(NULL,CMSampleBufferGetFormatDescription((__bridge CMSampleBufferRef)samples[0]),
+      (__bridge CFDictionaryRef)@{(__bridge id)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder:@YES},NULL,NULL,&decoder);
+    if (decodeStatus == noErr) {
+      for (id object in samples) {
+        OSStatus status = VTDecompressionSessionDecodeFrameWithOutputHandler(decoder,(__bridge CMSampleBufferRef)object,0,NULL,
+          ^(OSStatus s, VTDecodeInfoFlags f, CVImageBufferRef image, CMTime pts, CMTime duration) {
+            dispatch_async(self->_queue, ^{ if (s == noErr && image != NULL) decoded++; });
+          });
+        if (status != noErr) decodeStatus = status;
+      }
+      VTDecompressionSessionWaitForAsynchronousFrames(decoder);
+      VTDecompressionSessionInvalidate(decoder); CFRelease(decoder);
+      dispatch_sync(_queue, ^{});
+    }
+  }
+  NSMutableDictionary *output = [result mutableCopy];
+  output[@"freshHardwareDecodeStatus"] = @(decodeStatus);
+  output[@"freshHardwareDecodedFrames"] = @(decoded);
+  return output;
+}
+@end
+
+static LumenMacVirtualDisplay *LumenProbeOwnedDisplay;
+static void LumenProbeDestroyOwnedDisplay(void) { [LumenProbeOwnedDisplay destroy]; LumenProbeOwnedDisplay = nil; }
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
@@ -737,6 +899,37 @@ int main(int argc, const char *argv[]) {
       : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
+    if (LumenProbeHasFlag(argc, argv, @"--virtual-display")) {
+      [NSApplication sharedApplication];
+      [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+      [NSApp finishLaunching];
+      LumenMacVirtualDisplayConfiguration *configuration = [LumenMacVirtualDisplayConfiguration new];
+      configuration.name = @"Lumen Isolated Measurement";
+      configuration.vendorID = 0xF0F0; configuration.productID = 0x5151; configuration.serialNumber = (uint32_t)getpid();
+      configuration.backingWidth = configuration.maximumBackingWidth = configuration.logicalWidth = (uint32_t)outputWidth;
+      configuration.backingHeight = configuration.maximumBackingHeight = configuration.logicalHeight = (uint32_t)outputHeight;
+      configuration.refreshRate = 120; configuration.highDensity = NO; configuration.hdrEnabled = hdr;
+      configuration.gamut = hdr ? LumenMacVirtualDisplayGamutRec2020 : LumenMacVirtualDisplayGamutSRGB;
+      configuration.transfer = hdr ? LumenMacVirtualDisplayTransferPQ : LumenMacVirtualDisplayTransferSDR;
+      configuration.currentEDRHeadroom = configuration.potentialEDRHeadroom = hdr ? 5 : 1;
+      configuration.currentPeakLuminanceNits = configuration.potentialPeakLuminanceNits = hdr ? 1000 : 200;
+      NSError *error;
+      LumenProbeOwnedDisplay = [[LumenMacVirtualDisplay alloc] initWithConfiguration:configuration error:&error];
+      atexit(LumenProbeDestroyOwnedDisplay);
+      if (!LumenProbeOwnedDisplay || ![LumenProbeOwnedDisplay selectPublishedModeWithError:&error]) {
+        LumenProbePrintJSON(@{@"error":@"isolated-display-create-failed",@"message":error.localizedDescription ?: @"unknown"}); return 10;
+      }
+      displayID = LumenProbeOwnedDisplay.displayID;
+      LumenProbeRunApplicationForDuration(.5);
+      if (CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID) ||
+          CGDisplayPixelsWide(displayID) != outputWidth || CGDisplayPixelsHigh(displayID) != outputHeight) {
+        LumenProbePrintJSON(@{@"error":@"isolated-display-contract-failed"}); return 11;
+      }
+      onlineDisplays = LumenProbeOnlineDisplays();
+    }
+    if (stimulus && (CGDisplayIsMain(displayID) || CGDisplayIsBuiltin(displayID))) {
+      LumenProbePrintJSON(@{@"error":@"stimulus-requires-independent-display"}); return 12;
+    }
     NSString *pixelFormatArgument = LumenProbeArgument(
       argc,
       argv,
@@ -825,6 +1018,14 @@ int main(int argc, const char *argv[]) {
       DISPATCH_QUEUE_SERIAL
     );
     dispatch_semaphore_t firstFrame = dispatch_semaphore_create(0);
+    NSString *encoderMode = LumenProbeArgument(argc,argv,@"--encoder-mode");
+    if (encoderMode && ![@[@"regular",@"low-latency"] containsObject:encoderMode]) {
+      LumenProbePrintJSON(@{@"error":@"invalid-encoder-mode"}); return 13;
+    }
+    LumenProbeEncoder *encoder = encoderMode ? [[LumenProbeEncoder alloc]
+      initWithQueue:callbackQueue width:(int)outputWidth height:(int)outputHeight hdr:hdr
+      bitrate:targetBitrateKbps lowLatency:[encoderMode isEqualToString:@"low-latency"]] : nil;
+    if (encoder && !encoder.ready) { LumenProbePrintJSON([encoder finish]); return 14; }
     LumenContentStreamProbeState *state =
       [[LumenContentStreamProbeState alloc] init];
     LumenProbeStimulus *stimulusWindow = nil;
@@ -890,6 +1091,8 @@ int main(int argc, const char *argv[]) {
       if (signalFirstFrame) {
         dispatch_semaphore_signal(firstFrame);
       }
+      if (status == kCGDisplayStreamFrameStatusFrameComplete && pixelBufferStatus == kCVReturnSuccess && pixelBuffer)
+        [encoder accept:pixelBuffer displayTime:displayTime];
     }];
     if (stream == nil) {
       [stimulusWindow stop];
@@ -939,6 +1142,8 @@ int main(int argc, const char *argv[]) {
       }
     }
     int32_t stopStatus = [stream stop];
+    dispatch_sync(callbackQueue, ^{});
+    NSDictionary *encoderMetrics = encoder ? [encoder finish] : @{};
     NSDictionary<NSString *, id> *stimulusMetrics = stimulusWindow == nil
       ? @{}
       : [stimulusWindow metrics];
@@ -995,6 +1200,7 @@ int main(int argc, const char *argv[]) {
 
     NSMutableDictionary<NSString *, id> *result = [@{
       @"backend": stream.backendName,
+      @"encoderComparison": encoderMetrics,
       @"contentStreamClass": stream.contentStreamClassName ?: @"unavailable",
       @"sharingSessionClass": stream.contentStreamSessionClassName ?: @"unavailable",
       @"underlyingCGDisplayStream": @(stream.underlyingDisplayStreamAvailable),
