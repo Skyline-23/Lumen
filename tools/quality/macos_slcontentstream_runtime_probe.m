@@ -1072,6 +1072,12 @@ int main(int argc, const char *argv[]) {
     int initialBitrateForUpdate = initialBitrateArgument.intValue;
     BOOL compareRawSourceLoad = LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
+    NSString *fixtureWarmupArgument = LumenProbeArgument(argc,argv,@"--fixture-warmup-seconds");
+    double fixtureWarmupSeconds = fixtureWarmupArgument.doubleValue;
+    if (fixtureWarmupArgument && (!replayCompare || !stimulus ||
+        !isfinite(fixtureWarmupSeconds) || fixtureWarmupSeconds < 0 || fixtureWarmupSeconds > 5)) {
+      LumenProbePrintJSON(@{@"error":@"fixture-warmup-requires-stimulated-replay-zero-to-five-seconds"}); return 13;
+    }
     NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     if (sourcePresentationPath && !sourceArrivalPath) {
@@ -1380,7 +1386,8 @@ int main(int argc, const char *argv[]) {
         }
       }
       if (replayCompare && replayFrames.count < 16 && pixelBuffer &&
-          status == kCGDisplayStreamFrameStatusFrameComplete) {
+          status == kCGDisplayStreamFrameStatusFrameComplete &&
+          callbackNanos - startNanos >= (uint64_t)(fixtureWarmupSeconds * 1e9)) {
         CVPixelBufferRef copy = LumenProbeCopyFrame(pixelBuffer);
         if (copy) { [replayFrames addObject:CFBridgingRelease(copy)]; }
         if (replayFrames.count == 16) dispatch_semaphore_signal(firstFrame);
@@ -1460,7 +1467,8 @@ int main(int argc, const char *argv[]) {
       if (replayFrames.count != 16) {
         LumenProbePrintJSON(@{@"error":@"replay-fixture-incomplete",@"frames":@(replayFrames.count)}); return 15;
       }
-      NSDictionary *fixtureAudit = LumenProbeReplayFixtureAudit(replayFrames);
+      NSMutableDictionary *fixtureAudit = [LumenProbeReplayFixtureAudit(replayFrames) mutableCopy];
+      fixtureAudit[@"warmupSeconds"] = @(fixtureWarmupSeconds);
       LumenProbePrintJSON(fixtureAudit);
       if (fixtureAudit[@"error"] || (stimulus && [fixtureAudit[@"uniqueFrames"] unsignedIntegerValue] < 2)) {
         LumenProbePrintJSON(@{@"error":@"replay-fixture-content-invalid"}); return 19;
