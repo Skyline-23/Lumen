@@ -154,7 +154,7 @@ final class LumenScreenCaptureVideoRuntime:
             ownerQueue: queue
         )
     let encoderOverlapClock = LumenEncoderOverlapClock()
-    var encoderOverlapEnabled = true
+    var encoderOverlapEnabled = false
     var encoderOverlapEpoch: UInt64?
     var encoderOverlapLastOutput: UInt64?
     var encoderOverlapIntervalMilliseconds: Double?
