@@ -248,8 +248,9 @@ extension LumenScreenCaptureVideoRuntime {
         let displayGap = compactTiming(captureIngressTimings.displayInterval)
         let displayLead = compactTiming(captureIngressTimings.scheduledDisplayLead)
         let outputGap = compactTiming(outputOccupancyTimings.interval)
+        let cadenceTarget = statistics.adaptiveTargetFrameRate.map(String.init) ?? "n/a"
         Self.pipelineLogger.notice(
-            "stage=occupancy source-gap-ms=\(sourceGap, privacy: .public) display-gap-ms=\(displayGap, privacy: .public) display-lead-ms=\(displayLead, privacy: .public) output-gap-ms=\(outputGap, privacy: .public) single-flight-outputs=\(self.outputOccupancyTimings.singleFlightOutputs, privacy: .public)/\(self.outputOccupancyTimings.outputs, privacy: .public) cadence-drops=\(self.statistics.intentionalFrameCadenceDropCount, privacy: .public) target-fps=\(self.statistics.adaptiveTargetFrameRate, privacy: .public)"
+            "stage=occupancy source-gap-ms=\(sourceGap, privacy: .public) display-gap-ms=\(displayGap, privacy: .public) display-lead-ms=\(displayLead, privacy: .public) output-gap-ms=\(outputGap, privacy: .public) single-flight-outputs=\(self.outputOccupancyTimings.singleFlightOutputs, privacy: .public)/\(self.outputOccupancyTimings.outputs, privacy: .public) cadence-drops=\(self.statistics.intentionalFrameCadenceDropCount, privacy: .public) target-fps=\(cadenceTarget, privacy: .public)"
         )
         Self.pipelineLogger.notice(
             "stage=window src-fps=\(sourceFrameRate, privacy: .public) submit-fps=\(submissionFrameRate, privacy: .public) output-fps=\(outputFrameRate, privacy: .public) pending-drop-fps=\(pendingDropFrameRate, privacy: .public) display-callback-ms=\(displayToCallback, privacy: .public) source-service-ms=\(sourceService, privacy: .public) metal-stage-ms=\(metalStage, privacy: .public) admission-wait-ms=\(admissionWait, privacy: .public) encode-call-ms=\(encodeCall, privacy: .public) encode-callback-ms=\(encodeCallback, privacy: .public) output-queue-ms=\(outputQueueWait, privacy: .public) output-service-ms=\(outputService, privacy: .public) frame-handler-ms=\(frameHandler, privacy: .public)"
