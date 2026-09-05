@@ -32,12 +32,6 @@ extension LumenScreenCaptureVideoRuntime {
         guard beginLifecycleStart() else {
             throw LumenScreenCaptureError.captureAlreadyRunning
         }
-        queue.sync {
-            interactiveCaptureActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
-                reason: "Interactive remote display capture and encoding"
-            )
-        }
         do {
             try await startCapture()
         } catch {

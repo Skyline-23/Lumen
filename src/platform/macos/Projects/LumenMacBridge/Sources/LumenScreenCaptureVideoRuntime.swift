@@ -76,8 +76,6 @@ final class LumenScreenCaptureVideoRuntime:
     // Lifecycle transitions are fenced on `queue` because capture start and
     // stop can suspend while either backend still owns callback delivery.
     var lifecycleStartInFlight = false
-    // Owned by the existing lifecycle queue, including failed-start rollback.
-    var interactiveCaptureActivity: NSObjectProtocol?
     var lifecycleStopRequested = false
     var lifecycleSettlementWaiters: [CheckedContinuation<Void, Never>] = []
     var compressionSession: VTCompressionSession?
@@ -210,12 +208,6 @@ final class LumenScreenCaptureVideoRuntime:
             )
         unchangedContentTargetFrameRate =
             configuration.effectiveTargetFrameRate
-    }
-
-    deinit {
-        if let interactiveCaptureActivity {
-            ProcessInfo.processInfo.endActivity(interactiveCaptureActivity)
-        }
     }
 
 }
