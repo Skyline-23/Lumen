@@ -127,7 +127,7 @@ final class LumenScreenCaptureVideoRuntime:
     // Collect once per runtime; log only after the bounded sample is complete.
     let recordsLiveSourceArrivals =
         ProcessInfo.processInfo.environment["LUMEN_TRACE_SOURCE_ARRIVALS"] == "1"
-    var liveSourceArrivalWarmup = 240
+    var liveSourceArrivalWarmup = 1800
     var liveSourceArrivalOrigin: UInt64?
     var liveSourceArrivalOffsets: [UInt64] = []
 #endif
