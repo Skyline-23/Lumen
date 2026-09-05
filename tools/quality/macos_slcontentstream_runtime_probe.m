@@ -1279,7 +1279,8 @@ int main(int argc, const char *argv[]) {
         __block NSString *output;
         [LumenEncoderReplayProbe runWithFrames:replayFrames width:outputWidth height:outputHeight
           hdr:hdr bitrate:targetBitrateKbps duration:duration
-          comparePeriodic:LumenProbeHasFlag(argc,argv,@"--compare-periodic") completion:^(NSString *json) {
+          comparePeriodic:LumenProbeHasFlag(argc,argv,@"--compare-periodic")
+          compareOverlap:LumenProbeHasFlag(argc,argv,@"--compare-overlap") completion:^(NSString *json) {
             output = json; dispatch_semaphore_signal(done);
           }];
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration*3+30];

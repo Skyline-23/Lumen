@@ -16,6 +16,7 @@ extension LumenScreenCaptureVideoRuntime {
               LumenRealtimeVideoEncoderAdmissionPolicy.hasCapacity(
                 inflightFrameCount: inflightFrameCount
               ) else { return false }
+        guard encoderOverlapEnabled else { return true }
         if encoderOverlapEpoch != mediaEpoch {
             encoderOverlapEpoch = mediaEpoch
             encoderOverlapLastOutput = nil
@@ -48,6 +49,7 @@ extension LumenScreenCaptureVideoRuntime {
     func observeEncoderOverlapOutput(context: LumenEncodedFrameContext,
                                      rawCallbackMachTime: UInt64) {
         dispatchPrecondition(condition: .onQueue(queue))
+        guard encoderOverlapEnabled else { return }
         guard context.bootstrapReason == nil else {
             encoderOverlapLastOutput = nil
             encoderOverlapNotBefore = nil

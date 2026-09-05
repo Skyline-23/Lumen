@@ -9,10 +9,11 @@ import VideoToolbox
 /// the product runtime, including its two-slot/latest-pending admission policy.
 @objc(LumenEncoderReplayProbe)
 public final class LumenEncoderReplayProbe: NSObject {
-    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:completion:)
+    @objc(runWithFrames:width:height:hdr:bitrate:duration:comparePeriodic:compareOverlap:completion:)
     public static func run(
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
-        duration: Double, comparePeriodic: Bool, completion: @escaping @Sendable (String) -> Void
+        duration: Double, comparePeriodic: Bool, compareOverlap: Bool,
+        completion: @escaping @Sendable (String) -> Void
     ) {
         guard frames.count > 0, frames.count <= 32, width > 0, height > 0,
               duration.isFinite, (1 ... 60).contains(duration), bitrate > 0 else {
@@ -23,7 +24,17 @@ public final class LumenEncoderReplayProbe: NSObject {
         let fixture = LumenEncoderReplayFixture(buffers: buffers)
         Task {
             let runner = LumenEncoderReplayRunner()
-            if comparePeriodic {
+            if compareOverlap {
+                var results: [String] = []
+                for enabled in [false, true, false] {
+                    results.append(await runner.run(
+                        fixture: fixture, width: width, height: height, hdr: hdr,
+                        bitrate: bitrate, duration: duration, periodicSeconds: 1,
+                        overlapEnabled: enabled
+                    ))
+                }
+                completion("{\"mode\":\"production-overlap-aba\",\"comparisons\":[" + results.joined(separator: ",") + "]}")
+            } else if comparePeriodic {
                 var results: [String] = []
                 for interval in [1, 4, 1] {
                     results.append(await runner.run(
@@ -81,7 +92,8 @@ private actor LumenEncoderReplayRunner {
     }
 
     func run(fixture: LumenEncoderReplayFixture, width: Int, height: Int,
-             hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int) async -> String {
+             hdr: Bool, bitrate: Int, duration: Double, periodicSeconds: Int,
+             overlapEnabled: Bool = true) async -> String {
         let metrics = LumenEncoderReplayMetrics()
         do {
             let configuration = LumenMacCaptureConfiguration(
@@ -127,7 +139,10 @@ private actor LumenEncoderReplayRunner {
                 }
                 return values
             }
-            runtime.queue.sync { runtime.statistics.isRunning = true }
+            runtime.queue.sync {
+                runtime.encoderOverlapEnabled = overlapEnabled
+                runtime.statistics.isRunning = true
+            }
             for buffer in fixture.buffers {
                 guard CVPixelBufferGetWidth(buffer) == width,
                       CVPixelBufferGetHeight(buffer) == height,
@@ -178,6 +193,7 @@ private actor LumenEncoderReplayRunner {
                 }
                 return [
                     "mode": "production-encoder-immutable-replay", "periodicSeconds": periodicSeconds,
+                    "overlapEnabled": overlapEnabled,
                     "outputFPS": Double(metrics.latencies.count) / seconds,
                     "outputFrames": metrics.latencies.count, "offeredFrames": offered - skippedProducerDeadlines,
                     "producerSkippedDeadlines": skippedProducerDeadlines, "measurementSeconds": seconds,
