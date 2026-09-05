@@ -248,6 +248,7 @@ private struct LumenTileProbeSample: @unchecked Sendable {
     let y: Int32
     let width: Int32
     let height: Int32
+    let sourceIndex: Int32
 }
 
 /// Bounded C-callback ingress for the existing screen harness. Mutable sample
@@ -264,11 +265,11 @@ public final class LumenTileOutputProbe: NSObject {
         super.init()
     }
 
-    @objc(recordSample:status:flags:x:y:width:height:)
+    @objc(recordSample:status:flags:x:y:width:height:sourceIndex:)
     public func record(sample: CMSampleBuffer?, status: Int32, flags: UInt32,
-                       x: Int32, y: Int32, width: Int32, height: Int32) {
+                       x: Int32, y: Int32, width: Int32, height: Int32, sourceIndex: Int32) {
         continuation.yield(.init(sample: sample, status: status, flags: flags,
-                                 x: x, y: y, width: width, height: height))
+                                 x: x, y: y, width: width, height: height, sourceIndex: sourceIndex))
     }
 
     @objc(finishWithCompletion:)
@@ -293,6 +294,8 @@ private actor LumenTileOutputCollector {
             }
             let dimensions = CMVideoFormatDescriptionGetDimensions(format)
             var parameterSets: [String] = []
+            var parameterPointers: [UnsafePointer<UInt8>] = []
+            var parameterSizes: [Int] = []
             for index in 0 ... 2 {
                 var pointer: UnsafePointer<UInt8>?
                 var length = 0
@@ -301,6 +304,8 @@ private actor LumenTileOutputCollector {
                     parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil) == noErr,
                    let pointer, length > 0, length < 4096 {
                     parameterSets.append(Data(bytes: pointer, count: length).base64EncodedString())
+                    parameterPointers.append(pointer)
+                    parameterSizes.append(length)
                 }
             }
             var headerLength: Int32 = 0
@@ -328,22 +333,51 @@ private actor LumenTileOutputCollector {
             }
             let transfer = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction)
             let pq = (transfer as? String) == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String)
+            // Ask CoreMedia to derive the container colour fields from the exact
+            // encoder VPS/SPS/PPS. No colour extension or bitstream is invented.
+            var rebuilt: CMFormatDescription?
+            let rebuildStatus = parameterPointers.count == 3 ? CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                allocator: nil, parameterSetCount: parameterPointers.count,
+                parameterSetPointers: parameterPointers, parameterSetSizes: parameterSizes,
+                nalUnitHeaderLength: headerLength, extensions: nil, formatDescriptionOut: &rebuilt
+            ) : kCMFormatDescriptionError_InvalidParameter
+            let rebuiltPQ = rebuilt.map {
+                (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String) ==
+                    (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String)
+            } ?? false
+            var normalized: CMSampleBuffer?
+            var normalizeStatus: OSStatus = -1
+            if let rebuilt, (0 ... 2).contains(output.sourceIndex) {
+                // These three synthetic inputs have explicit 120 Hz source
+                // times. Restore the submitted index, never callback order.
+                var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 120),
+                    presentationTimeStamp: CMTime(value: Int64(output.sourceIndex), timescale: 120), decodeTimeStamp: .invalid)
+                var sampleSize = size
+                normalizeStatus = CMSampleBufferCreateReady(allocator: nil, dataBuffer: block,
+                    formatDescription: rebuilt, sampleCount: 1, sampleTimingEntryCount: 1,
+                    sampleTimingArray: &timing, sampleSizeEntryCount: 1,
+                    sampleSizeArray: &sampleSize, sampleBufferOut: &normalized)
+            }
             let vcl = nalTypes.filter { $0 <= 31 }
-            valid = valid && parsed && offset == size && !vcl.isEmpty && pq &&
+            valid = valid && parsed && offset == size && !vcl.isEmpty && rebuiltPQ && normalizeStatus == noErr &&
                 dimensions.width == 3840 && dimensions.height == 2160 &&
                 output.x == 0 && output.y == 0 && output.width == 3840 && output.height == 2160
             rows.append(["status": output.status, "flags": output.flags, "bytes": size,
                 "origin": [output.x, output.y], "tileSize": [output.width, output.height],
                 "formatSize": [dimensions.width, dimensions.height], "nalTypes": nalTypes,
                 "parameterSets": parameterSets,
+                "sourceIndex": output.sourceIndex, "rebuildStatus": rebuildStatus,
+                "rebuiltPQ": rebuiltPQ, "normalizeStatus": normalizeStatus,
                 "formatExtensionKeys": (CMFormatDescriptionGetExtensions(format) as? [String: Any])?.keys.sorted() ?? [],
                 "nalValid": parsed, "pq": pq, "ptsValid": sample.presentationTimeStamp.isValid,
                 "durationValid": sample.duration.isValid])
-            if case .dropped = continuation.yield(.init(value: sample, acknowledgeAfterDecode: false)) { valid = false }
+            if let normalized {
+                if case .dropped = continuation.yield(.init(value: normalized, acknowledgeAfterDecode: false)) { valid = false }
+            }
         }
         continuation.finish()
         let decoded = await LumenReplayDecoderLoad().run(compressed,
-            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, acknowledge: {})
+            pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true, acknowledge: {})
         valid = valid && rows.count == 3 && decoded["hardware"] == 1 && decoded["decoded"] == 3 &&
             decoded["submitted"] == 3 && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
         let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid,
@@ -360,9 +394,11 @@ private final class LumenReplayDecodeAcknowledgement: Sendable {
 private final class LumenReplayDecodeCallback: Sendable {
     let output: AsyncStream<Bool>.Continuation
     let pixelFormat: OSType
-    init(output: AsyncStream<Bool>.Continuation, pixelFormat: OSType) {
+    let requiresHDR4K: Bool
+    init(output: AsyncStream<Bool>.Continuation, pixelFormat: OSType, requiresHDR4K: Bool) {
         self.output = output
         self.pixelFormat = pixelFormat
+        self.requiresHDR4K = requiresHDR4K
     }
 }
 
@@ -372,9 +408,10 @@ private final class LumenReplayDecodeCallback: Sendable {
 private actor LumenReplayDecoderLoad {
     func run(_ input: AsyncStream<LumenReplayCompressedSample>,
              pixelFormat: OSType,
+             requiresHDR4K: Bool = false,
              acknowledge: @escaping @Sendable () -> Void) async -> [String: Int] {
         let (outputs, continuation) = AsyncStream<Bool>.makeStream()
-        let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat)
+        let callback = LumenReplayDecodeCallback(output: continuation, pixelFormat: pixelFormat, requiresHDR4K: requiresHDR4K)
         let collector = Task {
             var decoded = 0
             var invalid = 0
@@ -403,7 +440,14 @@ private actor LumenReplayDecoderLoad {
                         let context = Unmanaged<LumenReplayDecodeCallback>
                             .fromOpaque(refcon).takeUnretainedValue()
                         let valid = status == noErr && image.map {
-                            CVPixelBufferGetPixelFormatType($0) == context.pixelFormat
+                            CVPixelBufferGetPixelFormatType($0) == context.pixelFormat &&
+                            (!context.requiresHDR4K || (
+                                CVPixelBufferGetWidth($0) == 3840 && CVPixelBufferGetHeight($0) == 2160 &&
+                                (CVBufferCopyAttachment($0, kCVImageBufferTransferFunctionKey, nil) as? String) ==
+                                    (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String) &&
+                                (CVBufferCopyAttachment($0, kCVImageBufferColorPrimariesKey, nil) as? String) ==
+                                    (kCVImageBufferColorPrimaries_ITU_R_2020 as String)
+                            ))
                         } == true
                         context.output.yield(valid)
                         if valid { acknowledgement?.acknowledge() }

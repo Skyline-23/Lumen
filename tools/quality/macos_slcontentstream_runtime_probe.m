@@ -1046,7 +1046,7 @@ static void LumenProbeTileOutput(void *context, void *sourceContext,
   LumenProbeTilePoint point, LumenProbeTileSize size, OSStatus status,
   VTEncodeInfoFlags flags, CMSampleBufferRef sample) {
   [(__bridge LumenTileOutputProbe *)context recordSample:sample status:status flags:flags
-    x:point.x y:point.y width:size.width height:size.height];
+    x:point.x y:point.y width:size.width height:size.height sourceIndex:(int32_t)((uintptr_t)sourceContext)-1];
 }
 
 int main(int argc, const char *argv[]) {
@@ -1174,7 +1174,7 @@ int main(int argc, const char *argv[]) {
                 CVBufferSetAttachment(buffer,kCVImageBufferYCbCrMatrixKey,kCVImageBufferYCbCrMatrix_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
                 VTEncodeInfoFlags flags = 0;
                 OSStatus encoded = encode(session,buffer,(LumenProbeTilePoint){0,0},
-                  (LumenProbeTileSize){3840,2160},NULL,NULL,&flags);
+                  (LumenProbeTileSize){3840,2160},NULL,(void *)(uintptr_t)(frame+1),&flags);
                 [submissions addObject:@(encoded)];
                 // Drain each smoke input before releasing it. Not a benchmark.
                 tileSession[@"completeStatus"] = @(complete(session));
