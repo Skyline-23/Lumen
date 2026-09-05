@@ -14,7 +14,7 @@ public final class LumenEncoderReplayProbe: NSObject {
         frames: NSArray, width: Int, height: Int, hdr: Bool, bitrate: Int,
         duration: Double, completion: @escaping @Sendable (String) -> Void
     ) {
-        guard !frames.isEmpty, frames.count <= 32, width > 0, height > 0,
+        guard frames.count > 0, frames.count <= 32, width > 0, height > 0,
               duration.isFinite, (1 ... 60).contains(duration), bitrate > 0 else {
             completion("{\"error\":\"invalid-production-replay-arguments\"}")
             return
