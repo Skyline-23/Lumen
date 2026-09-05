@@ -1216,6 +1216,17 @@ int main(int argc, const char *argv[]) {
           }
         }
       }
+      if (LumenProbeHasFlag(argc, argv, @"--encode-tile-samples")) {
+        NSMutableArray *unsupported = [NSMutableArray array];
+        NSDictionary *statuses = tileSession[@"encodePropertyStatuses"];
+        for (NSString *key in statuses) if ([statuses[key] intValue] != noErr) [unsupported addObject:key];
+        [unsupported sortUsingSelector:@selector(compare:)];
+        tileSession[@"unsupportedRequiredProperties"] = unsupported;
+        BOOL fullContract = statuses.count > 0 && unsupported.count == 0 &&
+          [tileSession[@"output"][@"valid"] boolValue] && !tileSession[@"error"];
+        tileSession[@"fullVideoContractValid"] = @(fullContract);
+        if (!fullContract && !tileSession[@"error"]) tileSession[@"error"] = @"tile-video-contract-unsupported";
+      }
       LumenProbePrintJSON(@{@"mode":@"hevc-tile-capability-discovery", @"listStatus":@(listStatus),
         @"tileKeyPresent":@(tileKey && *tileKey), @"encoders":encoders, @"discoveries":discoveries,
         @"tileSession":tileSession});
