@@ -1826,6 +1826,11 @@ int main(int argc, const char *argv[]) {
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
     BOOL inspectNativeColor = LumenProbeHasFlag(argc,argv,@"--inspect-native-color");
+    BOOL slVirtualDisplay=LumenProbeHasFlag(argc,argv,@"--sl-virtual-display");
+    if (slVirtualDisplay && (!LumenProbeHasFlag(argc,argv,@"--virtual-display") ||
+        !hdr || outputWidth!=3840 || outputHeight!=2160)) {
+      LumenProbePrintJSON(@{@"valid":@NO,@"error":@"sl-probe-requires-owned-4k-hdr-display"});return 22;
+    }
     BOOL nativeColorSLDisplay=LumenProbeHasFlag(argc,argv,@"--native-color-sl-display");
     BOOL nativeColorSCKReference=LumenProbeHasFlag(argc,argv,@"--native-color-sck-reference");
     if ((nativeColorSLDisplay || nativeColorSCKReference) && !inspectNativeColor) {
@@ -1953,7 +1958,7 @@ int main(int argc, const char *argv[]) {
       configuration.currentEDRHeadroom = configuration.potentialEDRHeadroom = hdr ? 5 : 1;
       configuration.currentPeakLuminanceNits = configuration.potentialPeakLuminanceNits = hdr ? 1000 : 200;
       NSError *error;
-      Class ownedDisplayClass=nativeColorSLDisplay?LumenProbeNativeColorSLDisplay.class:LumenMacVirtualDisplay.class;
+      Class ownedDisplayClass=(nativeColorSLDisplay || slVirtualDisplay)?LumenProbeNativeColorSLDisplay.class:LumenMacVirtualDisplay.class;
       LumenProbeOwnedDisplay = [[ownedDisplayClass alloc] initWithConfiguration:configuration error:&error];
       atexit(LumenProbeDestroyOwnedDisplay);
       // WindowServer publishes modes asynchronously after creation.
