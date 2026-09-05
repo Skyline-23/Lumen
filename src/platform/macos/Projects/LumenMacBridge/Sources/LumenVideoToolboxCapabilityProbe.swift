@@ -239,6 +239,7 @@ private struct LumenReplayCompressedSample: @unchecked Sendable {
     let value: CMSampleBuffer
     let acknowledgeAfterDecode: Bool
     var decoded: (@Sendable (Bool) -> Void)? = nil
+    var inspect: (@Sendable (CVPixelBuffer) -> Void)? = nil
 }
 
 private struct LumenTileProbeSample: @unchecked Sendable {
@@ -399,6 +400,23 @@ private actor LumenTileOutputCollector {
     private let mastering = LumenVideoHDRDisplayMetadata.hdr10Default().encodedData
     private let contentLight = LumenVideoContentLightLevelInfo.hdr10Default().encodedData
 
+    // Bounded synthetic capability inspection, never in a timed benchmark or
+    // production path. A few luma probes disambiguate canvas update semantics.
+    private static func inspectCanvas(_ buffer: CVPixelBuffer, index: Int32) -> [String: Int] {
+        var result = ["sourceIndex": Int(index), "width": CVPixelBufferGetWidth(buffer), "height": CVPixelBufferGetHeight(buffer)]
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+              CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return result }
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return result }
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        for y in [64, 512, 1024, 2048] where y < result["height"]! {
+            for x in [64, 1856, 1984, 3776] where x < result["width"]! {
+                result["x\(x)y\(y)"] = Int(base.load(fromByteOffset: y * stride + x * 2, as: UInt16.self) >> 6)
+            }
+        }
+        return result
+    }
+
     private func hdrSEIPrefix(headerLength: Int32) -> Data? {
         guard mastering.count == 24, contentLight.count == 4, [1, 2, 4].contains(headerLength) else { return nil }
         // CoreMedia defines these 24/4-byte values as the ISO HEVC SEI payloads.
@@ -433,6 +451,12 @@ private actor LumenTileOutputCollector {
              completed: @escaping @Sendable (LumenTileProbeSample, Bool) -> Void) async -> String {
         var rows: [[String: Any]] = []
         let (compressed, continuation) = AsyncStream<LumenReplayCompressedSample>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        let (pixelRows, pixelContinuation) = AsyncStream<[String: Int]>.makeStream(bufferingPolicy: .bufferingOldest(8))
+        let pixels = Task {
+            var values: [[String: Int]] = []
+            for await row in pixelRows { values.append(row) }
+            return values
+        }
         let decoder = Task {
             await LumenReplayDecoderLoad().run(compressed,
                 pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, requiresHDR4K: true,
@@ -500,18 +524,7 @@ private actor LumenTileOutputCollector {
                 }
                 offset += length
             }
-            if output.x != 0 || output.y != 0 || output.width != 3840 || output.height != 2160 {
-                // Region capability inspection only. Do not relabel a cropped
-                // stream as full 4K or send an unknown fragment to the decoder.
-                rows.append(["status": output.status, "flags": output.flags, "bytes": size,
-                    "origin": [output.x, output.y], "tileSize": [output.width, output.height],
-                    "formatSize": [dimensions.width, dimensions.height], "sourceIndex": output.sourceIndex,
-                    "callbackNanos": output.callbackNanos, "nalTypes": nalTypes,
-                    "vclFirstSliceFlags": vclFirstSliceFlags, "vclPrefixBase64": vclPrefixes,
-                    "parameterSets": parameterSets, "nalValid": parsed && offset == size,
-                    "regionInspectionOnly": true])
-                valid = false; completed(output, false); continue
-            }
+            let regionInspection = output.x != 0 || output.y != 0 || output.width != 3840 || output.height != 2160
             let transfer = CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction)
             let pq = (transfer as? String) == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String)
             // Ask CoreMedia to derive the container colour fields from the exact
@@ -559,7 +572,7 @@ private actor LumenTileOutputCollector {
                 (CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_ContentLightLevelInfo) as? Data) == contentLight
             } ?? false
             staticMetadataValid = staticMetadataValid && formatMetadataValid
-            if let rebuilt, output.sourceIndex >= 0 && (benchmark || output.sourceIndex <= 2) {
+            if let rebuilt, output.sourceIndex >= 0 && (benchmark || output.sourceIndex <= 5) {
                 // These three synthetic inputs have explicit 120 Hz source
                 // times. Restore the submitted index, never callback order.
                 var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 120),
@@ -574,10 +587,12 @@ private actor LumenTileOutputCollector {
             valid = valid && parsed && offset == size && !vcl.isEmpty && rebuiltPQ && normalizeStatus == noErr &&
                 dimensions.width == 3840 && dimensions.height == 2160 &&
                 output.x == 0 && output.y == 0 && output.width == 3840 && output.height == 2160
-            if rows.count < 3 { rows.append(["status": output.status, "flags": output.flags, "bytes": size,
+            if rows.count < (benchmark ? 3 : 6) { rows.append(["status": output.status, "flags": output.flags, "bytes": size,
                 "origin": [output.x, output.y], "tileSize": [output.width, output.height],
                 "formatSize": [dimensions.width, dimensions.height], "nalTypes": nalTypes,
                 "parameterSets": parameterSets,
+                "callbackNanos": output.callbackNanos, "regionInspectionOnly": regionInspection,
+                "vclFirstSliceFlags": vclFirstSliceFlags, "vclPrefixBase64": vclPrefixes,
                 "sourceIndex": output.sourceIndex, "rebuildStatus": rebuildStatus,
                 "rebuiltPQ": rebuiltPQ, "normalizeStatus": normalizeStatus,
                 "hdrPrefixBytes": prefixBytes, "staticHDRInFormat": formatMetadataValid,
@@ -586,7 +601,10 @@ private actor LumenTileOutputCollector {
                 "durationValid": sample.duration.isValid]) }
             if let normalized {
                 let sample = LumenReplayCompressedSample(value: normalized, acknowledgeAfterDecode: false,
-                    decoded: { valid in completed(output, valid) })
+                    decoded: { valid in completed(output, valid) },
+                    inspect: regionInspection ? { buffer in
+                        pixelContinuation.yield(Self.inspectCanvas(buffer, index: output.sourceIndex))
+                    } : nil)
                 if case .dropped = continuation.yield(sample) {
                     decoderIngressDrops += 1; valid = false; completed(output, false)
                 }
@@ -594,19 +612,26 @@ private actor LumenTileOutputCollector {
         }
         continuation.finish()
         let decoded = await decoder.value
+        pixelContinuation.finish()
+        let inspectedPixels = await pixels.value
         valid = valid && (benchmark ? count > 3 : count == 3) && decoded["hardware"] == 1 && decoded["decoded"] == count &&
             decoded["submitted"] == count && decoded["failures"] == 0 && decoded["invalidOutputs"] == 0
         let metadataEquivalent = staticMetadataValid && hdrPrefixes > 0 && valid
         let result: [String: Any] = ["mode": "hevc-tile-output-smoke", "valid": valid && metadataEquivalent,
             "hdrMetadataEquivalent": metadataEquivalent, "hdrPrefixCount": hdrPrefixes,
-            "sampleCount": count, "decoderIngressDrops": decoderIngressDrops, "outputs": rows, "decoder": decoded]
+            "sampleCount": count, "decoderIngressDrops": decoderIngressDrops, "outputs": rows, "decoder": decoded,
+            "canvasPixelProbes": inspectedPixels]
         return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys)) ?? Data(), as: UTF8.self)
     }
 }
 
 private final class LumenReplayDecodeAcknowledgement: Sendable {
     let acknowledge: @Sendable (Bool) -> Void
-    init(_ acknowledge: @escaping @Sendable (Bool) -> Void) { self.acknowledge = acknowledge }
+    let inspect: (@Sendable (CVPixelBuffer) -> Void)?
+    init(_ acknowledge: @escaping @Sendable (Bool) -> Void, inspect: (@Sendable (CVPixelBuffer) -> Void)? = nil) {
+        self.acknowledge = acknowledge
+        self.inspect = inspect
+    }
 }
 
 private final class LumenReplayDecodeCallback: Sendable {
@@ -678,6 +703,7 @@ private actor LumenReplayDecoderLoad {
                             ))
                         } == true
                         context.output.yield(valid)
+                        if status == noErr, let image { acknowledgement?.inspect?(image) }
                         acknowledgement?.acknowledge(valid)
                     },
                     decompressionOutputRefCon: Unmanaged.passUnretained(callback).toOpaque()
@@ -699,11 +725,11 @@ private actor LumenReplayDecoderLoad {
                                         value: kCFBooleanTrue) != noErr { failures += 1 }
             }
             guard let session else { failures += 1; sample.decoded?(false); continue }
-            let acknowledgement = sample.acknowledgeAfterDecode || sample.decoded != nil
-                ? Unmanaged.passRetained(LumenReplayDecodeAcknowledgement { valid in
+            let acknowledgement = sample.acknowledgeAfterDecode || sample.decoded != nil || sample.inspect != nil
+                ? Unmanaged.passRetained(LumenReplayDecodeAcknowledgement({ valid in
                     if valid && sample.acknowledgeAfterDecode { acknowledge() }
                     sample.decoded?(valid)
-                }).toOpaque()
+                }, inspect: sample.inspect)).toOpaque()
                 : nil
             let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample.value,
                 flags: [._EnableAsynchronousDecompression, ._1xRealTimePlayback],
