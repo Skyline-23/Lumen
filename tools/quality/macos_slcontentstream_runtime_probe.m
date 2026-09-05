@@ -6,6 +6,7 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <VideoToolbox/VideoToolbox.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <mach/mach_time.h>
 
 #import "LumenMacBridge.h"
@@ -220,7 +221,7 @@ static NSScreen *LumenProbeScreenForDisplayID(CGDirectDisplayID displayID) {
 static void LumenProbeRunApplicationForDuration(double duration) {
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration];
   while ([deadline timeIntervalSinceNow] > 0) {
-    NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.050];
+    NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:MIN(.005, MAX(0,deadline.timeIntervalSinceNow))];
     NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
       untilDate:slice inMode:NSDefaultRunLoopMode dequeue:YES];
     if (event) [NSApp sendEvent:event];
@@ -240,6 +241,81 @@ static NSString *LumenProbeArgument(
   }
   return nil;
 }
+
+// Public capture adapter for the same callback, virtual display and encoder.
+// This is probe-only DI; production backend selection is unchanged.
+@interface LumenProbeSCKSource : NSObject <SCStreamOutput>
+@property(nonatomic, strong) SCStream *stream;
+@property(nonatomic, copy) LumenMacSkyLightDisplayStreamFrameHandler handler;
+- (BOOL)startDisplay:(CGDirectDisplayID)displayID width:(size_t)width height:(size_t)height
+  hdr:(BOOL)hdr queue:(dispatch_queue_t)queue error:(NSError **)error;
+- (int32_t)stop;
+@end
+
+static BOOL LumenProbeWaitPumping(dispatch_semaphore_t semaphore) {
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+  while (dispatch_semaphore_wait(semaphore, DISPATCH_TIME_NOW) != 0) {
+    if (deadline.timeIntervalSinceNow <= 0) return NO;
+    LumenProbeRunApplicationForDuration(.01);
+  }
+  return YES;
+}
+
+@implementation LumenProbeSCKSource
+- (BOOL)startDisplay:(CGDirectDisplayID)displayID width:(size_t)width height:(size_t)height
+  hdr:(BOOL)hdr queue:(dispatch_queue_t)queue error:(NSError **)error {
+  if (!CGPreflightScreenCaptureAccess()) {
+    if (error) *error = [NSError errorWithDomain:@"LumenProbe" code:1
+      userInfo:@{NSLocalizedDescriptionKey:@"SCK capture permission unavailable; no prompt requested"}];
+    return NO;
+  }
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  __block SCShareableContent *content;
+  __block NSError *failure;
+  [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:NO
+    completionHandler:^(SCShareableContent *value, NSError *e) {
+      content = value; failure = e; dispatch_semaphore_signal(done);
+    }];
+  if (!LumenProbeWaitPumping(done) || !content) {
+    if (error) *error = failure; return NO;
+  }
+  SCDisplay *display;
+  for (SCDisplay *candidate in content.displays) if (candidate.displayID == displayID) display = candidate;
+  if (!display) return NO;
+  SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+  SCStreamConfiguration *configuration = [SCStreamConfiguration new];
+  configuration.captureDynamicRange = hdr ? SCCaptureDynamicRangeHDRCanonicalDisplay : SCCaptureDynamicRangeSDR;
+  configuration.width = width; configuration.height = height;
+  configuration.pixelFormat = hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  configuration.colorSpaceName = hdr ? kCGColorSpaceITUR_2100_PQ : kCGColorSpaceITUR_709;
+  configuration.colorMatrix = hdr ? kCGDisplayStreamYCbCrMatrix_ITU_R_2020 : kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
+  configuration.minimumFrameInterval = CMTimeMake(1,120); configuration.queueDepth = 2;
+  configuration.showsCursor = YES; configuration.capturesAudio = NO;
+  configuration.scalesToFit = YES; configuration.preservesAspectRatio = YES;
+  self.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:nil];
+  if (![self.stream addStreamOutput:self type:SCStreamOutputTypeScreen sampleHandlerQueue:queue error:error]) return NO;
+  [self.stream startCaptureWithCompletionHandler:^(NSError *e) { failure = e; dispatch_semaphore_signal(done); }];
+  BOOL completed = LumenProbeWaitPumping(done);
+  if (error) *error = failure;
+  return completed && !failure;
+}
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sample ofType:(SCStreamOutputType)type {
+  if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sample)) return;
+  NSArray *attachments = (__bridge NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, false);
+  NSDictionary *info = attachments.firstObject;
+  if (!info || [info[SCStreamFrameInfoStatus] integerValue] != SCFrameStatusComplete) return;
+  CVPixelBufferRef buffer = CMSampleBufferGetImageBuffer(sample);
+  self.handler(kCGDisplayStreamFrameStatusFrameComplete,
+    [info[SCStreamFrameInfoDisplayTime] unsignedLongLongValue],buffer,buffer ? kCVReturnSuccess : kCVReturnInvalidArgument);
+}
+- (int32_t)stop {
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  __block NSError *failure;
+  [self.stream stopCaptureWithCompletionHandler:^(NSError *error) { failure = error; dispatch_semaphore_signal(done); }];
+  BOOL completed = LumenProbeWaitPumping(done);
+  return completed && !failure ? 0 : -1;
+}
+@end
 
 static BOOL LumenProbeHasFlag(
   int argc,
@@ -578,10 +654,7 @@ static int LumenProbeRunProductionPipeline(
       break;
     }
     if (stimulusWindow != nil) {
-      NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.001];
-      [[NSRunLoop currentRunLoop]
-        runMode:NSDefaultRunLoopMode
-        beforeDate:slice];
+      LumenProbeRunApplicationForDuration(.001);
     } else {
       usleep(1000);
     }
@@ -611,10 +684,7 @@ static int LumenProbeRunProductionPipeline(
   while (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < measurementDeadline) {
     LumenProbeDrainForwardedFrames(controller, counters, YES);
     if (stimulusWindow != nil) {
-      NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.001];
-      [[NSRunLoop currentRunLoop]
-        runMode:NSDefaultRunLoopMode
-        beforeDate:slice];
+      LumenProbeRunApplicationForDuration(.001);
     } else {
       usleep(1000);
     }
@@ -752,7 +822,10 @@ static int LumenProbeRunProductionPipeline(
   for (NSString *key in properties) {
     status = VTSessionSetProperty(_session,(__bridge CFStringRef)key,(__bridge CFTypeRef)properties[key]);
     _properties[key] = @(status);
-    if (status != noErr) requiredPassed = NO;
+    // Low-latency HEVC does not expose the ordinary encoder's speed hint.
+    // Preserve all format/rate requirements; report this unsupported hint.
+    if (status != noErr && !(lowLatency &&
+        [key isEqualToString:(__bridge NSString *)kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality])) requiredPassed = NO;
   }
   status = VTSessionSetProperty(_session,kVTCompressionPropertyKey_AllowOpenGOP,kCFBooleanFalse);
   _properties[@"AllowOpenGOP"] = @(status);
@@ -800,7 +873,7 @@ static int LumenProbeRunProductionPipeline(
             idr |= type == 19 || type == 20;
             offset += 4+length;
           }
-          if (idr) { self->_idrs++; [self->_recoverySamples removeAllObjects]; }
+          if (idr) { self->_idrs++; if (self->_recoverySamples.count < 3) [self->_recoverySamples removeAllObjects]; }
           if (self->_idrs > 1 && self->_recoverySamples.count < 3)
             [self->_recoverySamples addObject:(__bridge id)sample];
           CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
@@ -902,6 +975,13 @@ int main(int argc, const char *argv[]) {
       : (int32_t)MAX(MIN(bitrateArgument.longLongValue, INT32_MAX), 0);
     BOOL hdr = LumenProbeHasFlag(argc, argv, @"--hdr");
     BOOL stimulus = LumenProbeHasFlag(argc, argv, @"--stimulus");
+    NSString *sourceMode = LumenProbeArgument(argc,argv,@"--source") ?: @"private";
+    BOOL useSCK = [sourceMode isEqualToString:@"sck"];
+    if (!useSCK && ![sourceMode isEqualToString:@"private"]) return 13;
+    if (LumenProbeHasFlag(argc,argv,@"--pipeline") &&
+        (useSCK || LumenProbeArgument(argc,argv,@"--encoder-mode"))) {
+      LumenProbePrintJSON(@{@"error":@"source-and-encoder-selectors-only-raw"}); return 13;
+    }
     if (LumenProbeHasFlag(argc, argv, @"--virtual-display")) {
       [NSApplication sharedApplication];
       [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -1016,7 +1096,7 @@ int main(int argc, const char *argv[]) {
       );
     }
 
-    if (![LumenMacSkyLightDisplayStream isSupported]) {
+    if (!useSCK && ![LumenMacSkyLightDisplayStream isSupported]) {
       LumenProbePrintJSON(@{
         @"error": @"slcontentstream-runtime-unavailable",
         @"onlineDisplays": onlineDisplays
@@ -1049,20 +1129,7 @@ int main(int argc, const char *argv[]) {
     }
     uint64_t startNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 
-    LumenMacSkyLightDisplayStream *stream =
-      [[LumenMacSkyLightDisplayStream alloc]
-        initWithDisplayID:displayID
-                 outputWidth:outputWidth
-                outputHeight:outputHeight
-                 pixelFormat:pixelFormat
-            minimumFrameTime:0
-                  queueDepth:2
-                  showCursor:YES
-                 yCbCrMatrix:matrix
-           dynamicRangeMode:hdr ? 2 : 0
-             colorSpaceName:colorSpace
-              callbackQueue:callbackQueue
-               frameHandler:^(CGDisplayStreamFrameStatus status,
+    LumenMacSkyLightDisplayStreamFrameHandler handler = ^(CGDisplayStreamFrameStatus status,
                               uint64_t displayTime,
                               CVPixelBufferRef pixelBuffer,
                               CVReturn pixelBufferStatus) {
@@ -1104,8 +1171,14 @@ int main(int argc, const char *argv[]) {
       }
       if (status == kCGDisplayStreamFrameStatusFrameComplete && pixelBufferStatus == kCVReturnSuccess && pixelBuffer)
         [encoder accept:pixelBuffer displayTime:displayTime];
-    }];
-    if (stream == nil) {
+    };
+    LumenMacSkyLightDisplayStream *stream = useSCK ? nil : [[LumenMacSkyLightDisplayStream alloc]
+      initWithDisplayID:displayID outputWidth:outputWidth outputHeight:outputHeight pixelFormat:pixelFormat
+      minimumFrameTime:0 queueDepth:2 showCursor:YES yCbCrMatrix:matrix dynamicRangeMode:hdr ? 2 : 0
+      colorSpaceName:colorSpace callbackQueue:callbackQueue frameHandler:handler];
+    LumenProbeSCKSource *sck = useSCK ? [LumenProbeSCKSource new] : nil;
+    sck.handler = handler;
+    if (!useSCK && stream == nil) {
       [stimulusWindow stop];
       LumenProbePrintJSON(@{
         @"error": @"slcontentstream-create-failed",
@@ -1128,7 +1201,9 @@ int main(int argc, const char *argv[]) {
     fflush(stdout);
 
     NSError *startError = nil;
-    if (![stream startWithError:&startError]) {
+    BOOL started = useSCK ? [sck startDisplay:displayID width:outputWidth height:outputHeight
+      hdr:hdr queue:callbackQueue error:&startError] : [stream startWithError:&startError];
+    if (!started) {
       [stimulusWindow stop];
       LumenProbePrintJSON(@{
         @"error": @"slcontentstream-start-failed",
@@ -1152,7 +1227,7 @@ int main(int argc, const char *argv[]) {
         usleep((useconds_t)(duration * 1e6));
       }
     }
-    int32_t stopStatus = [stream stop];
+    int32_t stopStatus = useSCK ? [sck stop] : [stream stop];
     dispatch_sync(callbackQueue, ^{});
     NSDictionary *encoderMetrics = encoder ? [encoder finish] : @{};
     NSDictionary<NSString *, id> *stimulusMetrics = stimulusWindow == nil
@@ -1210,7 +1285,7 @@ int main(int argc, const char *argv[]) {
       : 0;
 
     NSMutableDictionary<NSString *, id> *result = [@{
-      @"backend": stream.backendName,
+      @"backend": useSCK ? @"screencapturekit" : stream.backendName,
       @"encoderComparison": encoderMetrics,
       @"contentStreamClass": stream.contentStreamClassName ?: @"unavailable",
       @"sharingSessionClass": stream.contentStreamSessionClassName ?: @"unavailable",
@@ -1250,6 +1325,10 @@ int main(int argc, const char *argv[]) {
     } mutableCopy];
     [result addEntriesFromDictionary:stimulusMetrics];
     LumenProbePrintJSON(result);
-    return firstFrameWait == 0 && wrapFailureCount == 0 ? 0 : 5;
+    BOOL encoderPassed = !encoder || ([encoderMetrics[@"encoderErrors"] unsignedIntegerValue] == 0 &&
+      [encoderMetrics[@"encoderHDRTransferValid"] boolValue] &&
+      [encoderMetrics[@"freshHardwareDecodeStatus"] intValue] == 0 &&
+      [encoderMetrics[@"freshHardwareDecodedFrames"] intValue] == 3);
+    return firstFrameWait == 0 && wrapFailureCount == 0 && encoderPassed ? 0 : 5;
   }
 }
