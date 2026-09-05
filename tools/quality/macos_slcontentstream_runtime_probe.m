@@ -1169,9 +1169,9 @@ int main(int argc, const char *argv[]) {
                   }
                 }
                 CVPixelBufferUnlockBaseAddress(buffer,0);
-                CVBufferSetAttachment(buffer,kCVImageBufferColorPrimaries,kCVImageBufferColorPrimaries_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
-                CVBufferSetAttachment(buffer,kCVImageBufferTransferFunction,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,kCVAttachmentMode_ShouldPropagate);
-                CVBufferSetAttachment(buffer,kCVImageBufferYCbCrMatrix,kCVImageBufferYCbCrMatrix_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
+                CVBufferSetAttachment(buffer,kCVImageBufferColorPrimariesKey,kCVImageBufferColorPrimaries_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
+                CVBufferSetAttachment(buffer,kCVImageBufferTransferFunctionKey,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,kCVAttachmentMode_ShouldPropagate);
+                CVBufferSetAttachment(buffer,kCVImageBufferYCbCrMatrixKey,kCVImageBufferYCbCrMatrix_ITU_R_2020,kCVAttachmentMode_ShouldPropagate);
                 VTEncodeInfoFlags flags = 0;
                 OSStatus encoded = encode(session,buffer,(LumenProbeTilePoint){0,0},
                   (LumenProbeTileSize){3840,2160},NULL,NULL,&flags);
