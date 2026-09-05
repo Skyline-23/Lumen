@@ -185,8 +185,16 @@ extension LumenScreenCaptureVideoRuntime {
             kVTCompressionPropertyKey_ExpectedFrameRate,
             value: targetFrameRate
         )
-        // Admission owns the negotiated ceiling using source PTS. Avoid a
-        // second hardware real-time limiter after newest-pending admission.
+        // ScreenCaptureKit and the Rust cadence controllers may lower the
+        // admitted source rate, but neither is allowed to raise the
+        // negotiated ceiling for this compression session.  These keys are
+        // optional across VideoToolbox encoder implementations; an encoder
+        // that does not advertise one keeps the required expected-frame-rate
+        // contract above and continues with source-PTS pacing.
+        try setOptionalProperty(
+            kVTCompressionPropertyKey_MaximumRealTimeFrameRate,
+            value: targetFrameRate
+        )
         try setOptionalProperty(
             kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
             value: LumenAdaptiveVideoFrameTiming
