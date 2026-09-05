@@ -206,6 +206,9 @@ type WarmScreenCaptureInventory = unsafe extern "C" fn();
 type MakeVideoConfiguration = unsafe extern "C" fn(u32) -> MacCaptureConfiguration;
 type MakeAudioConfiguration = unsafe extern "C" fn(u32) -> MacAudioCaptureConfiguration;
 type ConfigureForwarding = unsafe extern "C" fn(*mut BridgeController, usize, usize);
+type StartVideoCapture = unsafe extern "C" fn(
+    *mut BridgeController, MacCaptureConfiguration, *mut c_char, usize,
+) -> bool;
 type StartCapturePair = unsafe extern "C" fn(
     *mut BridgeController,
     MacCaptureConfiguration,
@@ -274,6 +277,7 @@ struct MacBridgeApi {
     configure_video_forwarding: ConfigureForwarding,
     configure_audio_forwarding: ConfigureForwarding,
     start_capture_pair: StartCapturePair,
+    start_video_capture: StartVideoCapture,
     stop_video_capture: StopCapture,
     stop_audio_capture: StopCapture,
     pop_video: PopVideo,
@@ -348,6 +352,7 @@ impl MacBridgeApi {
                     handle,
                     b"LumenMacBridgeControllerStartCapturePair\0",
                 )?,
+                start_video_capture: load_symbol(handle, b"LumenMacBridgeControllerStartCapture\0")?,
                 stop_video_capture: load_symbol(handle, b"LumenMacBridgeControllerStopCapture\0")?,
                 stop_audio_capture: load_symbol(
                     handle,
@@ -424,6 +429,7 @@ unsafe impl Send for MacSessionState {}
 
 pub(crate) struct MacPlatformSessionControl {
     api: MacBridgeApi,
+    stream_audio: bool,
     state: Mutex<MacSessionState>,
     native_input: MacNativeInput,
     application: PortableApplication,

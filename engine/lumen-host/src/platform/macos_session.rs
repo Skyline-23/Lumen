@@ -1,7 +1,7 @@
 use super::*;
 
 impl MacPlatformSessionControl {
-    pub(crate) fn new() -> Result<Self, String> {
+    pub(crate) fn new(stream_audio: bool) -> Result<Self, String> {
         let api = MacBridgeApi::load()?;
         if !unsafe { (api.prepare_application_main_thread)() } {
             return Err(
@@ -14,6 +14,7 @@ impl MacPlatformSessionControl {
         }
         Ok(Self {
             api,
+            stream_audio,
             state: Mutex::new(MacSessionState {
                 controller,
                 workspace_key: None,
@@ -183,20 +184,35 @@ impl MacPlatformSessionControl {
         audio.channel_count = i32::from(plan.audio_channels);
         audio.frame_size = AUDIO_FRAME_COUNT as i32;
         let mut error = [0_i8; 1024];
-        let status = unsafe {
-            (self.api.start_capture_pair)(
-                state.controller,
-                video,
-                audio,
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        state.audio_capture_failure = capture_pair_audio_failure(status, error_text(&error))?;
+        state.audio_capture_failure = self.start_configured_capture(state.controller, video, audio, &mut error)?;
         state.pcm.clear();
         state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
-        state.next_audio_deadline = Some(Instant::now());
+        state.next_audio_deadline = self.stream_audio.then(Instant::now);
         Ok(())
+    }
+
+    fn start_configured_capture(
+        &self,
+        controller: *mut BridgeController,
+        video: MacCaptureConfiguration,
+        audio: MacAudioCaptureConfiguration,
+        error: &mut [c_char],
+    ) -> Result<Option<String>, String> {
+        if self.stream_audio {
+            let status = unsafe {
+                (self.api.start_capture_pair)(controller, video, audio, error.as_mut_ptr(), error.len())
+            };
+            capture_pair_audio_failure(status, error_text(error))
+        } else {
+            let started = unsafe {
+                (self.api.start_video_capture)(controller, video, error.as_mut_ptr(), error.len())
+            };
+            if !started {
+                return Err(format!("macOS video-only capture start failed: {}", error_text(error)));
+            }
+            eprintln!("Lumen native media stage=audio-disabled-by-host-policy");
+            Ok(None)
+        }
     }
 
     fn stop_locked(&self, state: &mut MacSessionState) -> Result<(), String> {
@@ -356,11 +372,11 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 enhanced_audio_quality: plan.enhanced_audio_quality,
             })
             .map_err(|status| format!("audio stream policy rejected the session: {status:?}"))?;
-            state.opus = Some(NativeOpusEncoder::new(
+            state.opus = if self.stream_audio { Some(NativeOpusEncoder::new(
                 &self.api,
                 &stream,
                 plan.enhanced_audio_quality,
-            )?);
+            )?) } else { None };
             state.audio_channels = usize::from(plan.audio_channels);
             unsafe {
                 (self.api.configure_video_forwarding)(state.controller, 3, 16);
@@ -411,17 +427,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             audio.channel_count = i32::from(plan.audio_channels);
             audio.frame_size = AUDIO_FRAME_COUNT as i32;
             let mut error = [0_i8; 1024];
-            let capture_status = unsafe {
-                (self.api.start_capture_pair)(
-                    state.controller,
-                    video,
-                    audio,
-                    error.as_mut_ptr(),
-                    error.len(),
-                )
-            };
-            state.audio_capture_failure =
-                capture_pair_audio_failure(capture_status, error_text(&error))?;
+            state.audio_capture_failure = self.start_configured_capture(state.controller, video, audio, &mut error)?;
             error.fill(0);
             if plan.virtual_display {
                 let key = state.workspace_key.as_ref().expect("workspace key");
@@ -438,7 +444,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                 self.publish_runtime_event(event)?;
             }
             state.next_audio_timestamp = audio_timestamp(monotonic_nanoseconds());
-            state.next_audio_deadline = Some(Instant::now());
+            state.next_audio_deadline = self.stream_audio.then(Instant::now);
             state.plan = Some(plan);
             Ok(())
         })();
@@ -635,6 +641,9 @@ impl PlatformSessionControl for MacPlatformSessionControl {
     }
 
     fn poll_encoded_audio(&self) -> Result<Option<PlatformEncodedAudioPacket>, String> {
+        if !self.stream_audio {
+            return Ok(None);
+        }
         let mut state = self
             .state
             .lock()
@@ -737,7 +746,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         // partially accumulated packet too so a resume cannot encode samples
         // that crossed the park boundary.
         state.pcm.clear();
-        state.next_audio_deadline = Some(Instant::now());
+        state.next_audio_deadline = self.stream_audio.then(Instant::now);
         Ok(())
     }
 

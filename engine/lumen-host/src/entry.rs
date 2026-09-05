@@ -105,7 +105,8 @@ fn run_macos_native_host(arguments: HostArguments) -> Result<(), NativeHostRunEr
     let mut source =
         UnixSignalCommandSource::install().map_err(NativeHostRunError::CommandSource)?;
     let platform =
-        Arc::new(MacPlatformSessionControl::new().map_err(NativeHostRunError::CommandSource)?);
+        Arc::new(MacPlatformSessionControl::new(arguments.get("stream_audio") == Some("true"))
+            .map_err(NativeHostRunError::CommandSource)?);
     let worker_platform = Arc::clone(&platform);
     let run_loop_platform = Arc::clone(&platform);
     let stop_loop_platform = Arc::clone(&platform);
