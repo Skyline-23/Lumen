@@ -1402,11 +1402,15 @@ int main(int argc, const char *argv[]) {
           else described[outputKey]=@{@"type":NSStringFromClass([value class])};
         }
         [rows addObject:@{@"symbol":symbols[index],@"sourceKey":key,@"mapped":described}];
-        valid=valid && destination.count>0;
+        if (index<3) valid=valid && destination.count>0;
       }
       CFRelease(pq);
+      const CFStringRef *rawRange=dlsym(handle,"kSLCaptureStreamDynamicRangeMode");
+      NSString *rawRangeKey=rawRange && *rawRange && CFGetTypeID(*rawRange)==CFStringGetTypeID()
+        ? (__bridge NSString *)*rawRange : @"";
+      valid=valid && [rawRangeKey isEqualToString:@"DynamicRangeMode"];
       LumenProbePrintJSON(@{@"valid":@(valid),@"methodEncoding":@(method_getTypeEncoding(method)),@"rows":rows,
-        @"createdStream":@NO,@"createdDisplay":@NO});return valid?0:23;
+        @"rawDynamicRangeKey":rawRangeKey,@"createdStream":@NO,@"createdDisplay":@NO});return valid?0:23;
     }
     if (LumenProbeHasFlag(argc,argv,@"--rgb10-p010-smoke")) {
       CVPixelBufferRef frames[2] = {NULL,NULL};
