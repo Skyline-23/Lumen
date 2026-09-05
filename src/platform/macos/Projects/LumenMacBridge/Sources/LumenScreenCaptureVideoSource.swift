@@ -334,6 +334,30 @@ extension LumenScreenCaptureVideoRuntime {
 
         applySkyLightSourceColorAttachments(to: pixelBuffer)
         recordSourceTiming(callbackEntryMachTime)
+#if DEBUG
+        if recordsLiveSourceArrivals, liveSourceArrivalOffsets.count < 768 {
+            if liveSourceArrivalWarmup > 0 {
+                liveSourceArrivalWarmup -= 1
+            } else {
+                let origin = liveSourceArrivalOrigin ?? callbackEntryMachTime
+                liveSourceArrivalOrigin = origin
+                liveSourceArrivalOffsets.append(UInt64(
+                    LumenMachTime.milliseconds(from: origin, to: callbackEntryMachTime) * 1_000_000
+                ))
+                if liveSourceArrivalOffsets.count == 768 {
+                    // Small chunks avoid unified-log string truncation. No
+                    // per-frame log serialization distorts the sampled window.
+                    for index in stride(from: 0, to: 768, by: 32) {
+                        let offsets = liveSourceArrivalOffsets[index ..< index + 32]
+                            .map(String.init).joined(separator: ",")
+                        Self.pipelineLogger.notice(
+                            "stage=source-arrival-trace display=\(self.configuration.displayID, privacy: .public) origin-mach=\(origin, privacy: .public) index=\(index, privacy: .public) total=768 offsets-ns=\(offsets, privacy: .public)"
+                        )
+                    }
+                }
+            }
+        }
+#endif
 
         guard let resources = skyLightMetalStagingResources else {
             recordSkyLightMetalStagingDrop(

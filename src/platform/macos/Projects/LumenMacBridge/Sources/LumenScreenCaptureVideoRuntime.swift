@@ -122,6 +122,15 @@ final class LumenScreenCaptureVideoRuntime:
     var stopping = false
     var captureCadenceTelemetry = LumenCaptureCadenceTelemetry()
     var captureIngressTimings = LumenCaptureIngressTimings()
+#if DEBUG
+    // Opt-in, timing-only diagnostic on the existing capture callback queue.
+    // Collect once per runtime; log only after the bounded sample is complete.
+    let recordsLiveSourceArrivals =
+        ProcessInfo.processInfo.environment["LUMEN_TRACE_SOURCE_ARRIVALS"] == "1"
+    var liveSourceArrivalWarmup = 240
+    var liveSourceArrivalOrigin: UInt64?
+    var liveSourceArrivalOffsets: [UInt64] = []
+#endif
     var outputOccupancyTimings = LumenCaptureOutputOccupancyTimings()
     var sourceCallbackServiceTiming = LumenCaptureStageTimingAccumulator()
     var encoderAdmissionWaitTiming = LumenCaptureStageTimingAccumulator()
