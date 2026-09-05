@@ -9,6 +9,7 @@
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <mach/mach_time.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <objc/runtime.h>
 
 #import "LumenMacBridge.h"
 
@@ -1357,6 +1358,56 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
+    if (LumenProbeHasFlag(argc,argv,@"--inspect-stream-property-mapping")) {
+      // Read-only dictionary translation, not stream construction. The inspected
+      // macOS 27 implementation uses only its two dictionary arguments, never self.
+      // Invoke the checked IMP directly with nil to avoid private init/side effects.
+      void *handle=dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",RTLD_NOW|RTLD_LOCAL);
+      Class cls=NSClassFromString(@"SLContentStream");
+      SEL selector=NSSelectorFromString(@"populateDisplayStreamProperties:with:");
+      Method method=cls ? class_getInstanceMethod(cls,selector) : NULL;
+      char returnType[16]={0},arg2[16]={0},arg3[16]={0};
+      if (method) {
+        method_getReturnType(method,returnType,sizeof(returnType));
+        method_getArgumentType(method,2,arg2,sizeof(arg2));
+        method_getArgumentType(method,3,arg3,sizeof(arg3));
+      }
+      if (!handle || !method || method_getNumberOfArguments(method)!=4 ||
+          strcmp(returnType,"v") || strcmp(arg2,"@") || strcmp(arg3,"@")) {
+        LumenProbePrintJSON(@{@"valid":@NO,@"error":@"stream-property-mapper-ABI-unavailable"});return 23;
+      }
+      typedef void (*Mapper)(id,SEL,NSMutableDictionary *,NSDictionary *);
+      Mapper map=(Mapper)method_getImplementation(method);
+      CGColorSpaceRef pq=CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ);
+      if (!pq) { LumenProbePrintJSON(@{@"valid":@NO,@"error":@"PQ-color-space-unavailable"});return 23; }
+      NSArray *symbols=@[@"kSLContentStreamDynamicRangeModeKey",@"kSLContentStreamColorSpaceKey",
+        @"kSLContentStreamYCbCrMatrixKey",@"kSLContentStreamGPUBoostKey",@"kSLContentStreamUseVideoToolboxKey"];
+      NSArray *values=@[@2,(__bridge id)pq,(__bridge id)kCVImageBufferYCbCrMatrix_ITU_R_2020,@YES,@NO];
+      NSMutableArray *rows=[NSMutableArray array];BOOL valid=YES;
+      for (NSUInteger index=0;index<symbols.count;index++) {
+        const CFStringRef *storage=dlsym(handle,[symbols[index] UTF8String]);
+        if (!storage || !*storage || CFGetTypeID(*storage)!=CFStringGetTypeID()) { valid=NO;continue; }
+        NSString *key=(__bridge NSString *)*storage;
+        NSMutableDictionary *destination=[NSMutableDictionary dictionary];
+        map(nil,selector,destination,@{key:values[index]});
+        NSMutableDictionary *described=[NSMutableDictionary dictionary];
+        for (NSString *outputKey in destination) {
+          id value=destination[outputKey];
+          if (CFGetTypeID((__bridge CFTypeRef)value)==CGColorSpaceGetTypeID()) {
+            CGColorSpaceRef space=(__bridge CGColorSpaceRef)value;
+            described[outputKey]=@{@"type":@"CGColorSpace",@"name":CFBridgingRelease(CGColorSpaceCopyName(space))?:@""};
+          } else if ([value isKindOfClass:[NSData class]]) {
+            described[outputKey]=@{@"type":@"NSData",@"length":@([value length])};
+          } else if ([NSJSONSerialization isValidJSONObject:@[value]]) described[outputKey]=value;
+          else described[outputKey]=@{@"type":NSStringFromClass([value class])};
+        }
+        [rows addObject:@{@"symbol":symbols[index],@"sourceKey":key,@"mapped":described}];
+        valid=valid && destination.count>0;
+      }
+      CFRelease(pq);
+      LumenProbePrintJSON(@{@"valid":@(valid),@"methodEncoding":@(method_getTypeEncoding(method)),@"rows":rows,
+        @"createdStream":@NO,@"createdDisplay":@NO});return valid?0:23;
+    }
     if (LumenProbeHasFlag(argc,argv,@"--rgb10-p010-smoke")) {
       CVPixelBufferRef frames[2] = {NULL,NULL};
       NSDictionary *attrs = @{(__bridge id)kCVPixelBufferIOSurfacePropertiesKey:@{},(__bridge id)kCVPixelBufferMetalCompatibilityKey:@YES};
