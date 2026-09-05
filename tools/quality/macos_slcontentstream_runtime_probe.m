@@ -25,6 +25,38 @@
                           update:(CGDisplayStreamUpdateRef)update dropCountOverride:(size_t)dropCount;
 @end
 
+// Reuse the existing SL creation implementation for this owned 1x diagnostic.
+// No product backend preference or private method ABI is changed here.
+@interface LumenMacVirtualDisplay (LumenProbeNativeColorBackend)
+- (BOOL)configureCGVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+  maximumBackingWidth:(uint32_t)width maximumBackingHeight:(uint32_t)height error:(NSError **)error;
+- (BOOL)configureSkyLightVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+  maximumBackingWidth:(uint32_t)width maximumBackingHeight:(uint32_t)height error:(NSError **)error;
+@end
+
+@interface LumenProbeNativeColorSLDisplay : LumenMacVirtualDisplay
+@end
+@implementation LumenProbeNativeColorSLDisplay
+- (BOOL)configureCGVirtualDisplayWithConfiguration:(LumenMacVirtualDisplayConfiguration *)configuration
+  maximumBackingWidth:(uint32_t)width maximumBackingHeight:(uint32_t)height error:(NSError **)error {
+  return [self configureSkyLightVirtualDisplayWithConfiguration:configuration
+    maximumBackingWidth:width maximumBackingHeight:height error:error];
+}
+- (BOOL)selectPublishedModeWithError:(NSError **)error {
+  // SL settings already select the preferred 1x mode. CGDisplaySetDisplayMode
+  // is not supported on this display class; require exact observed geometry.
+  CGDisplayModeRef mode=CGDisplayCopyDisplayMode(self.displayID);
+  BOOL valid=mode && self.usesSkyLightBackend && !CGDisplayIsMain(self.displayID) && !CGDisplayIsBuiltin(self.displayID) &&
+    CGDisplayModeGetWidth(mode)==3840 && CGDisplayModeGetHeight(mode)==2160 &&
+    CGDisplayModeGetPixelWidth(mode)==3840 && CGDisplayModeGetPixelHeight(mode)==2160 &&
+    fabs(CGDisplayModeGetRefreshRate(mode)-120)<.01;
+  if (mode) CGDisplayModeRelease(mode);
+  if (!valid && error) *error=[NSError errorWithDomain:@"LumenNativeColor" code:22
+    userInfo:@{NSLocalizedDescriptionKey:@"SL owned display has not published exact 3840x2160 1x120 mode"}];
+  return valid;
+}
+@end
+
 @interface LumenProbeDamageDisplayStream : LumenMacSkyLightDisplayStream
 @property(nonatomic, strong) LumenDisplayDamageProbe *damageProbe;
 @end
@@ -1280,6 +1312,7 @@ static int LumenProbeNativeColor(CGDirectDisplayID displayID, dispatch_queue_t c
   result[@"screenEDRHeadroom"]=@(screen.maximumExtendedDynamicRangeColorComponentValue);
   result[@"screenPotentialEDRHeadroom"]=@(screen.maximumPotentialExtendedDynamicRangeColorComponentValue);
   result[@"screenReferenceEDRHeadroom"]=@(screen.maximumReferenceExtendedDynamicRangeColorComponentValue);
+  result[@"virtualDisplayBackend"]=LumenProbeOwnedDisplay.usesSkyLightBackend?@"sl":@"cg";
   LumenProbePrintJSON(result);
   return [result[@"valid"] boolValue]?0:22;
 }
@@ -1700,6 +1733,10 @@ int main(int argc, const char *argv[]) {
     BOOL useSCK = [sourceMode isEqualToString:@"sck"];
     BOOL inspectDamage = LumenProbeHasFlag(argc,argv,@"--inspect-source-damage");
     BOOL inspectNativeColor = LumenProbeHasFlag(argc,argv,@"--inspect-native-color");
+    BOOL nativeColorSLDisplay=LumenProbeHasFlag(argc,argv,@"--native-color-sl-display");
+    if (nativeColorSLDisplay && !inspectNativeColor) {
+      LumenProbePrintJSON(@{@"valid":@NO,@"error":@"sl-display-selector-only-native-color-diagnostic"}); return 22;
+    }
     NSString *nativeColorMatrix=LumenProbeArgument(argc,argv,@"--native-color-matrix");
     if (nativeColorMatrix && (!inspectNativeColor || ![@[@"601",@"709",@"2020"] containsObject:nativeColorMatrix])) {
       LumenProbePrintJSON(@{@"valid":@NO,@"error":@"native-color-matrix-requires-color-probe-and-601-709-or-2020"}); return 22;
@@ -1822,7 +1859,8 @@ int main(int argc, const char *argv[]) {
       configuration.currentEDRHeadroom = configuration.potentialEDRHeadroom = hdr ? 5 : 1;
       configuration.currentPeakLuminanceNits = configuration.potentialPeakLuminanceNits = hdr ? 1000 : 200;
       NSError *error;
-      LumenProbeOwnedDisplay = [[LumenMacVirtualDisplay alloc] initWithConfiguration:configuration error:&error];
+      Class ownedDisplayClass=nativeColorSLDisplay?LumenProbeNativeColorSLDisplay.class:LumenMacVirtualDisplay.class;
+      LumenProbeOwnedDisplay = [[ownedDisplayClass alloc] initWithConfiguration:configuration error:&error];
       atexit(LumenProbeDestroyOwnedDisplay);
       // WindowServer publishes modes asynchronously after creation.
       BOOL selected = NO;
