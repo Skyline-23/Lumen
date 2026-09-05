@@ -1107,6 +1107,14 @@ int main(int argc, const char *argv[]) {
               if (value) CFRelease(value);
             }
             tileSession[@"properties"] = values;
+            if (LumenProbeHasFlag(argc, argv, @"--prepare-tile-session")) {
+              // The wrapper forwards x1 unchanged to the encoder and optionally
+              // writes x2. This capability check supplies no options/output;
+              // it does not assume a layout for either private payload.
+              typedef OSStatus (*TilePrepare)(CFTypeRef, const void *, void **);
+              TilePrepare prepare = (TilePrepare)dlsym(RTLD_DEFAULT, "VTTileCompressionSessionPrepareToEncodeTiles");
+              tileSession[@"prepareStatus"] = prepare ? @(prepare(session, NULL, NULL)) : @(-12900);
+            }
             invalidate(session);
             CFRelease(session);
           }
@@ -1117,7 +1125,8 @@ int main(int argc, const char *argv[]) {
         @"tileSession":tileSession});
       if (list) CFRelease(list);
       return listStatus == noErr && !tileSession[@"error"] &&
-        (!tileSession[@"createStatus"] || [tileSession[@"createStatus"] intValue] == noErr) ? 0 : 20;
+        (!tileSession[@"createStatus"] || [tileSession[@"createStatus"] intValue] == noErr) &&
+        (!tileSession[@"prepareStatus"] || [tileSession[@"prepareStatus"] intValue] == noErr) ? 0 : 20;
     }
     NSArray<NSDictionary<NSString *, id> *> *onlineDisplays =
       LumenProbeOnlineDisplays();
