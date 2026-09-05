@@ -1071,6 +1071,12 @@ int main(int argc, const char *argv[]) {
     NSString *initialBitrateArgument = LumenProbeArgument(argc,argv,@"--compare-initial-bitrate-kbps");
     int initialBitrateForUpdate = initialBitrateArgument.intValue;
     BOOL compareCombinedLoad = LumenProbeHasFlag(argc,argv,@"--compare-combined-load");
+    NSString *combinedSourceArgument = LumenProbeArgument(argc,argv,@"--combined-source-fps");
+    int combinedSourceFPS = combinedSourceArgument ? combinedSourceArgument.intValue : 120;
+    if (combinedSourceArgument && (!compareCombinedLoad || combinedSourceFPS < 1 || combinedSourceFPS > 120 ||
+        combinedSourceArgument.doubleValue != combinedSourceFPS)) {
+      LumenProbePrintJSON(@{@"error":@"combined-source-fps-requires-combined-load-and-integer-one-to-120"}); return 13;
+    }
     BOOL compareRawSourceLoad = compareCombinedLoad || LumenProbeHasFlag(argc,argv,@"--compare-raw-source-load");
     BOOL replayCompare = productionReplay || LumenProbeHasFlag(argc,argv,@"--replay-compare");
     NSString *fixtureWarmupArgument = LumenProbeArgument(argc,argv,@"--fixture-warmup-seconds");
@@ -1490,9 +1496,9 @@ int main(int argc, const char *argv[]) {
               colorSpaceName:colorSpace callbackQueue:callbackQueue frameHandler:handler];
             NSError *error = nil;
             BOOL success = loadStream != nil && [loadStream startWithError:&error];
-            return @{@"success":@(success), @"message":error.localizedDescription ?: @"", @"combinedLoad":@(compareCombinedLoad)};
+            return @{@"success":@(success), @"message":error.localizedDescription ?: @"", @"combinedLoad":@(compareCombinedLoad), @"sourceFrameRate":@(combinedSourceFPS)};
           }
-          if (loadStream == nil) return @{@"success":@YES, @"completeFrames":@0, @"combinedLoad":@(compareCombinedLoad)};
+          if (loadStream == nil) return @{@"success":@YES, @"completeFrames":@0, @"combinedLoad":@(compareCombinedLoad), @"sourceFrameRate":@(combinedSourceFPS)};
           int32_t status = [loadStream stop];
           loadStream = nil;
           __block uint64_t count = 0;

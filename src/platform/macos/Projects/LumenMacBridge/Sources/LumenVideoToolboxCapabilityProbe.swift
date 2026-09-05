@@ -126,6 +126,7 @@ public final class LumenEncoderReplayProbe: NSObject {
                         fixture: fixture, width: width, height: height, hdr: hdr,
                         bitrate: bitrate, duration: duration, periodicSeconds: 1,
                         decoderLoad: enabled && start["combinedLoad"] as? Bool == true,
+                        sourceFrameRate: start["sourceFrameRate"] as? Int ?? 120,
                         metalStaging: start["combinedLoad"] as? Bool == true ? enabled : nil,
                         forwarderRetention: enabled && start["combinedLoad"] as? Bool == true
                     )
