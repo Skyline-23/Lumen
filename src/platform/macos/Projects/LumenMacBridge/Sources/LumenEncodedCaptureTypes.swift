@@ -258,6 +258,23 @@ struct LumenEncodedBitrateTelemetry: Equatable, Sendable {
     }
 }
 
+/// Pure queue-owned edge detector; no timer or extra coordinator is needed.
+struct LumenEncoderActivityWakeGate: Equatable, Sendable {
+    private var wasIdle = false
+
+    mutating func observe(sourceRate: Double?, requestedRate: Int) -> Bool {
+        guard let sourceRate, sourceRate.isFinite, sourceRate >= 0,
+              requestedRate > 0 else { return false }
+        if sourceRate <= Double(requestedRate) / 8 {
+            wasIdle = true
+            return false
+        }
+        guard wasIdle, sourceRate >= Double(requestedRate) / 4 else { return false }
+        wasIdle = false
+        return true
+    }
+}
+
 struct LumenCaptureCadenceTelemetry: Equatable, Sendable {
     private static let reportingIntervalNanoseconds: UInt64 = 1_000_000_000
 

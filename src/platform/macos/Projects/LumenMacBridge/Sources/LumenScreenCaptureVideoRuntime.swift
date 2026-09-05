@@ -121,6 +121,7 @@ final class LumenScreenCaptureVideoRuntime:
     var inflightFrameCount = 0
     var stopping = false
     var captureCadenceTelemetry = LumenCaptureCadenceTelemetry()
+    var encoderActivityWakeGate = LumenEncoderActivityWakeGate()
     var captureIngressTimings = LumenCaptureIngressTimings()
 #if DEBUG
     // Opt-in, timing-only diagnostic on the existing capture callback queue.

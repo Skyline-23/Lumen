@@ -3,6 +3,22 @@ import CoreMedia
 import Dispatch
 import XCTest
 final class LumenCapturePipelineTests: XCTestCase {
+    func testEncoderActivityWakeOnlyFiresOnceAfterIdleAndRejectsInvalidRates() {
+        var gate = LumenEncoderActivityWakeGate()
+        XCTAssertFalse(gate.observe(sourceRate: 60, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: 1, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: nil, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: .nan, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: -1, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: 60, requestedRate: 0))
+        XCTAssertFalse(gate.observe(sourceRate: 20, requestedRate: 120))
+        XCTAssertTrue(gate.observe(sourceRate: 60, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: 60, requestedRate: 120))
+        XCTAssertFalse(gate.observe(sourceRate: 0, requestedRate: 60))
+        XCTAssertTrue(gate.observe(sourceRate: 30, requestedRate: 60))
+        XCTAssertFalse(gate.observe(sourceRate: 30, requestedRate: 60))
+    }
+
     func testFutureScheduledDisplayTimePreservesSourceCadence() throws {
         var timings = LumenCaptureIngressTimings()
         let tick = try XCTUnwrap(LumenMachTime.ticks(for: CMTime(value: 1, timescale: 1_000)))
