@@ -383,6 +383,21 @@ fn reconfiguration_reuses_the_length_independent_full_block_codec() {
 }
 
 #[test]
+fn path_mtu_shrink_preserves_sequence_generation_and_fec_reconstruction() {
+    let frame = video_frame(VARYING_FEC_FRAME_BYTES[0]);
+    let mut packetizer = NativeMediaPacketizer::new(video_config(1_191), 9).unwrap();
+    let first = packetizer.packetize_video_delta(&frame, 1, 20).unwrap();
+    packetizer.reconfigure(1_163).unwrap();
+    let second = packetizer.packetize_video_delta(&frame, 2, 20).unwrap();
+
+    assert!(second.datagrams.iter().all(|packet| packet.len() <= 1_163));
+    let header = decode_native_media_datagram(&second.datagrams[0]).unwrap().header;
+    assert_eq!(header.datagram_sequence, first.next_sequence);
+    assert_eq!(header.generation_id, 7);
+    assert_eq!(reconstruct_fec_blocks(&second), frame.payload);
+}
+
+#[test]
 fn dynamic_block_width_preserves_the_protocol_object_capacity() {
     const MINIMUM_MTU: usize = 37;
     const SHARD_BYTES: usize = 1;

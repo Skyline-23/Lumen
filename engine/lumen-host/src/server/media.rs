@@ -1980,7 +1980,7 @@ async fn poll_and_send_video(
         .lock()
         .ok()
         .and_then(|router| router.video_delivery_state());
-    let delivery =
+    let mut delivery =
         match delivery_for_session(delivery, session_epoch, |delivery| delivery.session_epoch) {
             SessionDelivery::Inactive => return MediaAttempt::Inactive,
             SessionDelivery::Owned(delivery) => delivery,
@@ -1992,6 +1992,19 @@ async fn poll_and_send_video(
                 }
             }
         };
+    // The negotiated ceiling is not the current QUIC path MTU. Discovery or
+    // black-hole recovery may reduce it after a bootstrap has been accepted.
+    // Reconfigure between objects so the first delta after a repair fits the
+    // current path without resetting its sequence or splitting an FEC block.
+    let Some(path_maximum_datagram_payload) = connection.max_datagram_size() else {
+        return MediaAttempt::Failed(video_failure(
+            "packetizer-failed",
+            "QUIC DATAGRAM is no longer available".to_owned(),
+        ));
+    };
+    delivery.maximum_datagram_payload = delivery
+        .maximum_datagram_payload
+        .min(path_maximum_datagram_payload);
     if delivery.parked {
         sender.enter_parked();
         let frame = match platform.poll_encoded_video() {
