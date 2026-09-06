@@ -1488,6 +1488,18 @@ fn display_mode_fits_capability(
     height: u32,
     capability: &NativeVideoCapability,
 ) -> bool {
+    if capability
+        .format
+        .as_ref()
+        .is_some_and(|format| format.codec == NativeVideoCodec::ShadowVc as i32)
+    {
+        return (2..=3840).contains(&width)
+            && (2..=2160).contains(&height)
+            && width % 2 == 0
+            && height % 2 == 0
+            && width <= capability.max_width
+            && height <= capability.max_height;
+    }
     (width <= capability.max_width && height <= capability.max_height)
         || (width <= capability.max_height && height <= capability.max_width)
 }

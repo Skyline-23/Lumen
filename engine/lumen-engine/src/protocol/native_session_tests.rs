@@ -72,8 +72,16 @@ fn capability_with_format(format: NativeVideoFormat) -> NativeVideoCapability {
 
 #[test]
 fn generation_four_negotiates_each_exact_hardware_video_row() {
-    // Given: five valid 4:2:0 and 4:4:4 codec/profile rows.
+    // Given: six valid 4:2:0 and 4:4:4 codec/profile rows.
     let formats = [
+        NativeVideoFormat {
+            codec: NativeVideoCodec::ShadowVc as i32,
+            profile: NativeVideoProfile::ShadowVcSpatialBase16 as i32,
+            chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+            bit_depth: 10,
+            dynamic_range: NativeDynamicRange::Sdr as i32,
+            color_range: NativeColorRange::Limited as i32,
+        },
         NativeVideoFormat {
             codec: NativeVideoCodec::H264 as i32,
             profile: NativeVideoProfile::H264High as i32,
@@ -140,6 +148,28 @@ fn generation_four_negotiates_each_exact_hardware_video_row() {
         assert_eq!((selected.max_width, selected.max_height), (3_840, 2_160));
         assert_eq!(selected.max_refresh_millihz, 120_000);
         assert_eq!(selected.hardware_accelerated, Some(true));
+    }
+}
+
+#[test]
+fn shadow_vc_rejects_odd_rotated_and_oversized_geometry() {
+    let format = NativeVideoFormat {
+        codec: NativeVideoCodec::ShadowVc as i32,
+        profile: NativeVideoProfile::ShadowVcSpatialBase16 as i32,
+        chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+        bit_depth: 10,
+        dynamic_range: NativeDynamicRange::Sdr as i32,
+        color_range: NativeColorRange::Limited as i32,
+    };
+    for (width, height) in [(3839, 2160), (3840, 2159), (2160, 3840), (3842, 2160)] {
+        let mut client = hello();
+        client.width = width;
+        client.height = height;
+        client.video_capabilities = vec![capability_with_format(format.clone())];
+        client.requested_video_format = Some(format.clone());
+        let mut host = host();
+        host.video_capabilities = vec![capability_with_format(format.clone())];
+        assert!(negotiate_native_session(&client, &host, 9).is_err());
     }
 }
 
