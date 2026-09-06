@@ -192,6 +192,9 @@ extension LumenEncodedCaptureSession {
             eventHandler: { event in
                 guard gate.isOpen() else { return }
                 callbacks.eventHandler?(event)
+            },
+            canAcceptFrame: {
+                gate.isOpen() && callbacks.canAcceptFrame()
             }
         )
     }

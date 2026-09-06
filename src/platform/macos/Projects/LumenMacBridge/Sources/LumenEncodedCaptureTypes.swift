@@ -96,6 +96,17 @@ public struct LumenEncodedCaptureSessionEvent: Equatable, Sendable {
 struct LumenEncodedCaptureCallbacks: Sendable {
     let frameHandler: @Sendable (LumenEncodedFrame) -> Void
     let eventHandler: (@Sendable (LumenEncodedCaptureSessionEvent) -> Void)?
+    let canAcceptFrame: @Sendable () -> Bool
+
+    init(
+        frameHandler: @escaping @Sendable (LumenEncodedFrame) -> Void,
+        eventHandler: (@Sendable (LumenEncodedCaptureSessionEvent) -> Void)? = nil,
+        canAcceptFrame: @escaping @Sendable () -> Bool = { true }
+    ) {
+        self.frameHandler = frameHandler
+        self.eventHandler = eventHandler
+        self.canAcceptFrame = canAcceptFrame
+    }
 }
 
 public struct LumenEncodedCaptureSessionStatistics: Equatable, Sendable {

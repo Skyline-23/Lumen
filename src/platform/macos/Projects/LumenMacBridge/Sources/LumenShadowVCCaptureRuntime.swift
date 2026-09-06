@@ -19,6 +19,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private var bootstrapEpoch: UInt64?
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var totalEncodeMilliseconds = 0.0
+    private var downstreamAdmissionDropCount: UInt64 = 0
     private nonisolated let epoch = Atomic<UInt64>(1)
     private nonisolated let acknowledged = Atomic(false)
     private nonisolated let repair = Atomic(false)
@@ -140,6 +141,13 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         let generation = epoch.load(ordering: .acquiring)
         guard captured.epoch == generation else { return }
         if bootstrapEpoch == generation && !acknowledged.load(ordering: .acquiring) { return }
+        // Discard raw samples under downstream pressure, before encoding can
+        // advance the predictive reference. Dropping an encoded P frame would
+        // invalidate every following frame and force an expensive repair.
+        guard context.callbacks.canAcceptFrame() else {
+            downstreamAdmissionDropCount &+= 1
+            return
+        }
         let timestamp = CMSampleBufferGetPresentationTimeStamp(handle.value)
         guard timestamp.isValid, timestamp.isNumeric else { return }
         let begin = DispatchTime.now().uptimeNanoseconds
@@ -192,6 +200,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         statistics.sourceFrameCount = output.completeFrames.load(ordering: .relaxed)
         statistics.completeSourceFrameCount = statistics.sourceFrameCount
         statistics.pendingAdmissionDropCount = output.droppedFrames.load(ordering: .relaxed)
+            &+ downstreamAdmissionDropCount
         statistics.droppedFrameCount = statistics.pendingAdmissionDropCount
     }
     private static func sample(bytes: Data, width: Int, height: Int, timestamp: CMTime, regional: Bool) throws -> CMSampleBuffer {

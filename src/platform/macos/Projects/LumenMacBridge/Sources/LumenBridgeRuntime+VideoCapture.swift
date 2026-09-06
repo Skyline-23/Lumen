@@ -214,6 +214,8 @@ private extension LumenBridgeRuntime {
                 let admission = videoForwarder.consume(frame: frame)
                 Task {
                     if admission == .recoveryKeyFrameRequired {
+                        let message = "Lumen capture stage=forwarder-reference-overflow source-frame=\(frame.sourceSequenceNumber)\n"
+                        try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
                         await runtime.requestImmediateCaptureKeyFrame()
                     }
                     await runtime.recordEncodedFrame(
@@ -227,6 +229,9 @@ private extension LumenBridgeRuntime {
                 Task {
                     await runtime.recordEncodedCaptureEvent(event)
                 }
+            },
+            canAcceptFrame: {
+                videoForwarder.canAcceptFrame()
             }
         )
     }

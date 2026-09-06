@@ -99,6 +99,12 @@ enum LumenVideoForwardingAdmission: Equatable, Sendable {
 final class LumenVideoCaptureForwarder: Sendable {
     private let state = Mutex(LumenVideoIngressState())
 
+    /// The serial predictive producer checks this before changing its codec
+    /// reference. While it encodes, only the consumer can remove queued frames.
+    func canAcceptFrame() -> Bool {
+        state.withLock { !$0.frames.isFull }
+    }
+
     func reset() {
         state.withLock { value in
             let frameCapacity = value.frames.capacity

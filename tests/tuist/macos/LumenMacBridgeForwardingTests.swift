@@ -4,6 +4,22 @@ import Foundation
 import XCTest
 
 final class LumenMacBridgeForwardingTests: XCTestCase {
+    func testPredictiveProducerCanWaitBeforeAdvancingItsReference() throws {
+        let forwarder = LumenVideoCaptureForwarder()
+        forwarder.setFrameCapacity(1)
+        let sample = try Self.makeEncodedSampleBuffer(payload: Data([1]), codecType: kCMVideoCodecType_HEVC)
+        for frameID in 1...20 {
+            XCTAssertTrue(forwarder.canAcceptFrame())
+            XCTAssertEqual(forwarder.consume(sampleBuffer: sample, codec: .shadowVC,
+                sourceSequenceNumber: UInt64(frameID), sourceDisplayTime: UInt64(frameID),
+                isKeyFrame: frameID == 1, isHDRSignaled: false), .queued)
+            // A stalled consumer does not require encoding or evicting a
+            // dependent frame. Admission resumes after that reference drains.
+            XCTAssertFalse(forwarder.canAcceptFrame())
+            XCTAssertEqual(forwarder.popNextFrame()?.sourceSequenceNumber, UInt64(frameID))
+            XCTAssertEqual(forwarder.snapshot().droppedFrameCount, 0)
+        }
+    }
     func testMediaEpochResetRetiresAwaitingBootstrapBeforeFreshControlledRequest() {
         var gate = LumenVideoBootstrapAdmissionGate()
         XCTAssertEqual(gate.admitSourceFrame(), .submitInitialKeyFrame)
