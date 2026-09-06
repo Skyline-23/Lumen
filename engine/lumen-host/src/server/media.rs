@@ -42,6 +42,27 @@ const NATIVE_AUDIO_EGRESS_RESERVE_BYTES: usize = 2 * 1_200;
 const PACKET_ARRIVAL_WARNING_COMMAND_CAPACITY: usize = 8;
 const PACKET_ARRIVAL_WARNING_MESSAGE: &str = "packet-arrival-history-unavailable";
 
+fn predictive_video_queue_reserve_bytes(
+    profile: crate::PlatformVideoProfile,
+    wire_budget_kbps: u32,
+    maximum_object_delay_us: u32,
+    object_bytes: usize,
+) -> usize {
+    if profile != crate::PlatformVideoProfile::ShadowVcRegionalPredictor8 {
+        return NATIVE_AUDIO_EGRESS_RESERVE_BYTES;
+    }
+    // The QUIC buffer is sized for transport bursts, not interactive latency.
+    // Reserve its excess capacity so queued FC4 data occupies at most half of
+    // the wire deadline at the negotiated rate. Always admit one whole object
+    // (subject to the existing deadline) and preserve the audio reserve.
+    let wire_window_bytes = (u64::from(wire_budget_kbps)
+        * u64::from(maximum_object_delay_us) / 16_000) as usize;
+    let capacity = wire_window_bytes.max(object_bytes)
+        .saturating_add(NATIVE_AUDIO_EGRESS_RESERVE_BYTES)
+        .min(NATIVE_MEDIA_SEND_BUFFER_BYTES);
+    NATIVE_MEDIA_SEND_BUFFER_BYTES - capacity + NATIVE_AUDIO_EGRESS_RESERVE_BYTES
+}
+
 #[derive(Clone)]
 struct PacketArrivalHistoryWarningReporter {
     commands: mpsc::Sender<PacketArrivalHistoryWarningCommand>,
@@ -2310,10 +2331,16 @@ async fn poll_and_send_video(
     let media_session_epoch = delivery.session_epoch;
     let media_park_revision = delivery.media_park_revision;
     let media_delivery_generation = delivery.media_delivery_generation;
+    let queue_reserve_bytes = predictive_video_queue_reserve_bytes(
+        delivery.video_format.profile,
+        delivery.wire_budget_kbps,
+        delivery.maximum_object_delay_us,
+        packetized.datagrams.iter().map(Vec::len).sum(),
+    );
     let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
-        NATIVE_AUDIO_EGRESS_RESERVE_BYTES,
+        queue_reserve_bytes,
         deadline,
         admission_gate,
         wire_pacer,
@@ -2571,6 +2598,20 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn predictive_queue_cannot_fill_the_transport_buffer_with_stale_frames() {
+        use crate::PlatformVideoProfile::{HevcMain, ShadowVcRegionalPredictor8};
+        use super::{predictive_video_queue_reserve_bytes, NATIVE_MEDIA_SEND_BUFFER_BYTES,
+                    NATIVE_AUDIO_EGRESS_RESERVE_BYTES};
+        let reserved = predictive_video_queue_reserve_bytes(ShadowVcRegionalPredictor8, 500_000, 16_000, 400_000);
+        assert_eq!(NATIVE_MEDIA_SEND_BUFFER_BYTES - reserved, 500_000);
+        // After admitting a 400 KB object only 100 KB of older data may remain.
+        assert_eq!(NATIVE_MEDIA_SEND_BUFFER_BYTES - (reserved + 400_000), 100_000);
+        let large = predictive_video_queue_reserve_bytes(ShadowVcRegionalPredictor8, 500_000, 16_000, 900_000);
+        assert_eq!(NATIVE_MEDIA_SEND_BUFFER_BYTES - large, 900_000);
+        assert_eq!(predictive_video_queue_reserve_bytes(HevcMain, 500_000, 16_000, 400_000), NATIVE_AUDIO_EGRESS_RESERVE_BYTES);
+        assert_eq!(predictive_video_queue_reserve_bytes(ShadowVcRegionalPredictor8, u32::MAX, u32::MAX, usize::MAX), NATIVE_AUDIO_EGRESS_RESERVE_BYTES);
+    }
     use super::super::packet_arrival::{
         PacketArrivalFeedbackError, PacketArrivalHistory, PacketIdentity,
     };
