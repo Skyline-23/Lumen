@@ -1,5 +1,28 @@
 use super::*;
 
+pub(super) fn poll_video_capture_events(
+    pop_event: PopVideoEvent,
+    controller: *mut BridgeController,
+) -> Result<(), String> {
+    loop {
+        let mut message = [0_i8; 1024];
+        let event = unsafe { pop_event(controller, message.as_mut_ptr(), message.len()) };
+        if !event.has_value {
+            return Ok(());
+        }
+        // Restart notifications and individual frame drops are recoverable.
+        // Failed is emitted after capture recovery has exhausted its options.
+        if event.kind == 3 {
+            let message = error_text(&message);
+            return Err(if message.is_empty() {
+                "macOS video capture failed".to_owned()
+            } else {
+                message
+            });
+        }
+    }
+}
+
 pub(super) struct NativeOpusEncoder {
     encoder: *mut MacOpusEncoder,
     encode: EncodeOpusFloat32,

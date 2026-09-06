@@ -4,6 +4,55 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static STOP_WORKSPACE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
+unsafe extern "C" fn pop_test_video_event(
+    controller: *mut BridgeController,
+    message: *mut c_char,
+    capacity: usize,
+) -> MacAudioCaptureEventRecord {
+    let events =
+        unsafe { &mut *controller.cast::<std::collections::VecDeque<(i32, &'static str)>>() };
+    let Some((kind, text)) = events.pop_front() else {
+        return MacAudioCaptureEventRecord::default();
+    };
+    for (index, byte) in text.bytes().take(capacity.saturating_sub(1)).enumerate() {
+        unsafe { *message.add(index) = byte as c_char };
+    }
+    MacAudioCaptureEventRecord {
+        has_value: true,
+        kind,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn video_capture_failure_is_observed_even_without_another_frame() {
+    let mut events = std::collections::VecDeque::from([
+        (0, "started"),
+        (4, "one frame dropped"),
+        (2, "restarting"),
+        (3, "capture display was removed"),
+    ]);
+    let controller = std::ptr::from_mut(&mut events).cast::<BridgeController>();
+    assert_eq!(
+        poll_video_capture_events(pop_test_video_event, controller).unwrap_err(),
+        "capture display was removed"
+    );
+    assert!(events.is_empty());
+}
+
+#[test]
+fn recoverable_video_events_do_not_close_the_session() {
+    let mut events = std::collections::VecDeque::from([
+        (0, "started"),
+        (2, "restarting"),
+        (4, "dropped"),
+        (5, "coalesced"),
+    ]);
+    let controller = std::ptr::from_mut(&mut events).cast::<BridgeController>();
+    assert!(poll_video_capture_events(pop_test_video_event, controller).is_ok());
+    assert!(events.is_empty());
+}
+
 unsafe extern "C" fn fail_workspace_stop_once(
     _key: *const c_char,
     _error: *mut c_char,

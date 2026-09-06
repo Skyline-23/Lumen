@@ -29,7 +29,7 @@ mod session;
 #[path = "macos_tests.rs"]
 mod tests;
 
-use media::{copy_annex_b_sample, NativeOpusEncoder};
+use media::{copy_annex_b_sample, poll_video_capture_events, NativeOpusEncoder};
 #[cfg(test)]
 use session::stop_workspace;
 
@@ -219,6 +219,10 @@ type StartCapturePair = unsafe extern "C" fn(
 type StopCapture = unsafe extern "C" fn(*mut BridgeController);
 type PopVideo =
     unsafe extern "C" fn(*mut BridgeController, *mut SampleBuffer) -> MacEncodedFrameRecord;
+// The video and audio event records have the same C layout. Their final u64
+// is a display time for video and a source sequence number for audio.
+type PopVideoEvent =
+    unsafe extern "C" fn(*mut BridgeController, *mut c_char, usize) -> MacAudioCaptureEventRecord;
 type PopAudio = unsafe extern "C" fn(
     *mut BridgeController,
     *mut c_void,
@@ -281,6 +285,7 @@ struct MacBridgeApi {
     stop_video_capture: StopCapture,
     stop_audio_capture: StopCapture,
     pop_video: PopVideo,
+    pop_video_event: PopVideoEvent,
     pop_audio: PopAudio,
     pop_audio_event: PopAudioEvent,
     request_key_frame: RequestKeyFrame,
@@ -359,6 +364,10 @@ impl MacBridgeApi {
                     b"LumenMacBridgeControllerStopAudioCapture\0",
                 )?,
                 pop_video: load_symbol(handle, b"LumenMacBridgeControllerPopNextForwardedFrame\0")?,
+                pop_video_event: load_symbol(
+                    handle,
+                    b"LumenMacBridgeControllerPopNextForwardedEvent\0",
+                )?,
                 pop_audio: load_symbol(
                     handle,
                     b"LumenMacBridgeControllerPopNextForwardedAudioFrame\0",

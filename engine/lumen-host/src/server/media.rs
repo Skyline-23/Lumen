@@ -1976,7 +1976,7 @@ async fn poll_and_send_video(
         let frame = match platform.poll_encoded_video() {
             Ok(frame) => frame,
             Err(message) => {
-                return MediaAttempt::Failed(MediaFailure {
+                return MediaAttempt::Terminal(MediaFailure {
                     code: PlatformRuntimeEventCode::NativeVideoCapturePoll,
                     kind: MediaKind::Video,
                     stage: "capture-poll-failed",
@@ -2032,7 +2032,7 @@ async fn poll_and_send_video(
             Ok(Some(frame)) => frame,
             Ok(None) => return MediaAttempt::Idle,
             Err(message) => {
-                return MediaAttempt::Failed(MediaFailure {
+                return MediaAttempt::Terminal(MediaFailure {
                     code: PlatformRuntimeEventCode::NativeVideoCapturePoll,
                     kind: MediaKind::Video,
                     stage: "capture-poll-failed",

@@ -621,6 +621,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             .state
             .lock()
             .map_err(|_| "macOS video state is unavailable".to_owned())?;
+        poll_video_capture_events(self.api.pop_video_event, state.controller)?;
         let mut sample = ptr::null();
         let record = unsafe { (self.api.pop_video)(state.controller, &mut sample) };
         if !record.has_value {
