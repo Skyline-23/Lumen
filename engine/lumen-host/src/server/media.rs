@@ -2457,6 +2457,7 @@ fn codec_configuration(
             crate::PlatformVideoCodec::H264 => NativeVideoCodec::H264 as i32,
             crate::PlatformVideoCodec::Hevc => NativeVideoCodec::Hevc as i32,
             crate::PlatformVideoCodec::Av1 => NativeVideoCodec::Av1 as i32,
+            crate::PlatformVideoCodec::ShadowVc => NativeVideoCodec::ShadowVc as i32,
         },
         decoder_configuration_record: configuration.decoder_configuration_record,
     }

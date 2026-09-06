@@ -12,6 +12,7 @@ enum VideoCodec {
   VIDEO_CODEC_H264 = 1;
   VIDEO_CODEC_HEVC = 2;
   VIDEO_CODEC_AV1 = 3;
+  VIDEO_CODEC_SHADOW_VC = 4;
 }
 
 enum DynamicRange {
@@ -30,6 +31,8 @@ enum VideoProfile {
   VIDEO_PROFILE_HEVC_MAIN_444 = 6;
   VIDEO_PROFILE_HEVC_MAIN_444_10 = 7;
   VIDEO_PROFILE_AV1_MAIN = 8;
+  // Independent SCV1 frames, q52 FC3 SpatialBase16V1, SDR BT.709 limited P010.
+  VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16 = 9;
 }
 
 enum ChromaSubsampling {
@@ -240,6 +243,11 @@ message CodecConfiguration {
   uint32 stream_id = 2;
   uint32 configuration_id = 3;
   VideoCodec codec = 4;
+  // SHADOW_VC: bounded (1024 byte) UTF-8 JSON with version=1, model, checkpoint,
+  // width and height matching the selected mode. The immutable model is
+  // fc3-spatial-base16-v1; checkpoint SHA256 is
+  // f8db4b2ec5c1a63ab4d9bb1c1fda16901769e8afe31793fdd4adcfa81a7f0ce2.
+  // Dimensions must be even, 2..3840 by 2..2160. No in-band scaling.
   bytes decoder_configuration_record = 5;
 }
 

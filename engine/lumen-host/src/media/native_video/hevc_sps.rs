@@ -38,7 +38,7 @@ pub(super) fn parse_and_validate_hevc_sps(
         PlatformVideoProfile::H264Main
         | PlatformVideoProfile::H264High
         | PlatformVideoProfile::H264High444Predictive
-        | PlatformVideoProfile::Av1Main => false,
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => false,
     };
     let selected_chroma = match profile.chroma_format_idc {
         1 => Some(PlatformChromaSubsampling::Yuv420),

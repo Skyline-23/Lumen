@@ -147,6 +147,7 @@ impl MacPlatformSessionControl {
         video.codec = match plan.video_format.codec {
             crate::PlatformVideoCodec::H264 => 0,
             crate::PlatformVideoCodec::Hevc => 1,
+            crate::PlatformVideoCodec::ShadowVc => 3,
             crate::PlatformVideoCodec::Av1 => return Err("AV1 is unavailable on macOS".to_owned()),
         };
         video.video_profile = plan.video_format.profile as i32;
@@ -388,6 +389,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
             video.codec = match plan.video_format.codec {
                 crate::PlatformVideoCodec::H264 => 0,
                 crate::PlatformVideoCodec::Hevc => 1,
+                crate::PlatformVideoCodec::ShadowVc => 3,
                 crate::PlatformVideoCodec::Av1 => {
                     return Err("AV1 is unavailable on macOS".to_owned())
                 }

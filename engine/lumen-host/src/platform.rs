@@ -48,6 +48,7 @@ pub enum PlatformVideoCodec {
     H264,
     Hevc,
     Av1,
+    ShadowVc,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +61,7 @@ pub enum PlatformVideoProfile {
     HevcMain444,
     HevcMain44410,
     Av1Main,
+    ShadowVcSpatialBase16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -335,6 +337,7 @@ pub enum LumenHostPlatformVideoCodec {
     H264 = 0,
     Hevc = 1,
     Av1 = 2,
+    ShadowVc = 3,
 }
 
 #[repr(C)]
@@ -348,6 +351,7 @@ pub enum LumenHostPlatformVideoProfile {
     HevcMain444 = 5,
     HevcMain44410 = 6,
     Av1Main = 7,
+    ShadowVcSpatialBase16 = 8,
 }
 
 #[repr(C)]
@@ -503,6 +507,7 @@ impl From<PlatformSessionPlan> for LumenHostPlatformSessionPlan {
                 PlatformVideoCodec::H264 => LumenHostPlatformVideoCodec::H264,
                 PlatformVideoCodec::Hevc => LumenHostPlatformVideoCodec::Hevc,
                 PlatformVideoCodec::Av1 => LumenHostPlatformVideoCodec::Av1,
+                PlatformVideoCodec::ShadowVc => LumenHostPlatformVideoCodec::ShadowVc,
             },
             video_profile: match plan.video_format.profile {
                 PlatformVideoProfile::H264Main => LumenHostPlatformVideoProfile::H264Main,
@@ -515,6 +520,7 @@ impl From<PlatformSessionPlan> for LumenHostPlatformSessionPlan {
                 PlatformVideoProfile::HevcMain444 => LumenHostPlatformVideoProfile::HevcMain444,
                 PlatformVideoProfile::HevcMain44410 => LumenHostPlatformVideoProfile::HevcMain44410,
                 PlatformVideoProfile::Av1Main => LumenHostPlatformVideoProfile::Av1Main,
+                PlatformVideoProfile::ShadowVcSpatialBase16 => LumenHostPlatformVideoProfile::ShadowVcSpatialBase16,
             },
             chroma_subsampling: match plan.video_format.chroma_subsampling {
                 PlatformChromaSubsampling::Yuv420 => LumenHostPlatformChromaSubsampling::Yuv420,

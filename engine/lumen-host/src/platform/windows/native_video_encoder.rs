@@ -38,6 +38,7 @@ impl NativeVideoEncoderCatalog {
             PlatformVideoCodec::H264 => self.h264.as_ref(),
             PlatformVideoCodec::Hevc => self.hevc.as_ref(),
             PlatformVideoCodec::Av1 => self.av1.as_ref(),
+            PlatformVideoCodec::ShadowVc => None,
         }
         .ok_or_else(|| {
             format!(
@@ -703,6 +704,7 @@ pub(super) fn output_subtype(codec: PlatformVideoCodec) -> windows_api::core::GU
         PlatformVideoCodec::H264 => MFVideoFormat_H264,
         PlatformVideoCodec::Hevc => MFVideoFormat_HEVC,
         PlatformVideoCodec::Av1 => MFVideoFormat_AV1,
+        PlatformVideoCodec::ShadowVc => windows_api::core::GUID::zeroed(),
     }
 }
 
@@ -732,6 +734,7 @@ pub(super) fn output_profile(plan: NativeVideoEncoderPlan) -> u32 {
         }
         (PlatformVideoCodec::Av1, _, false) => eAVEncAV1VProfile_Main_420_8.0,
         (PlatformVideoCodec::Av1, _, true) => eAVEncAV1VProfile_Main_420_10.0,
+        (PlatformVideoCodec::ShadowVc, _, _) => 0,
     };
     u32::try_from(profile).unwrap_or_default()
 }
@@ -787,5 +790,6 @@ pub(super) fn codec_name(codec: PlatformVideoCodec) -> &'static str {
         PlatformVideoCodec::H264 => "H.264",
         PlatformVideoCodec::Hevc => "HEVC",
         PlatformVideoCodec::Av1 => "AV1",
+        PlatformVideoCodec::ShadowVc => "ShadowVC (unavailable on Windows)",
     }
 }

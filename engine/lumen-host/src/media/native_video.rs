@@ -7,6 +7,7 @@ mod configuration_tests;
 mod h26x;
 mod hevc_sps;
 mod sps;
+mod shadow_vc;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 #[cfg(test)]
@@ -50,6 +51,10 @@ impl NativeVideoBitstreamNormalizer {
         let (payload, discovered_configuration) = match self.format.codec {
             PlatformVideoCodec::H264 => h26x::normalize_avc(&frame.payload, self.format)?,
             PlatformVideoCodec::Hevc => h26x::normalize_hevc(&frame.payload, self.format)?,
+            PlatformVideoCodec::ShadowVc => {
+                let configuration = shadow_vc::configuration_from_frame(&frame.payload)?;
+                (frame.payload.clone(), Some(configuration))
+            }
             PlatformVideoCodec::Av1 => {
                 validate_av1_obu_stream(&frame.payload)?;
                 (frame.payload.clone(), None)

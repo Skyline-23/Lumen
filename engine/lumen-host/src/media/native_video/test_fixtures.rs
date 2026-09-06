@@ -70,7 +70,7 @@ pub(crate) fn encoded_frame(format: PlatformVideoFormat) -> PlatformEncodedVideo
             vec![0x44, 0x01, 0xc0],
             vec![0x26, 0x01, 0x80],
         ],
-        PlatformVideoCodec::Av1 => Vec::new(),
+        PlatformVideoCodec::Av1 | PlatformVideoCodec::ShadowVc => Vec::new(),
     };
     let mut payload = Vec::new();
     for parameter_set in parameter_sets {
@@ -96,7 +96,7 @@ fn avc_sps(format: PlatformVideoFormat) -> Vec<u8> {
         | PlatformVideoProfile::HevcMain10
         | PlatformVideoProfile::HevcMain444
         | PlatformVideoProfile::HevcMain44410
-        | PlatformVideoProfile::Av1Main => 0,
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => 0,
     };
     let chroma_format_idc = match format.chroma_subsampling {
         PlatformChromaSubsampling::Yuv420 => 1,
@@ -139,7 +139,7 @@ fn hevc_sps(format: PlatformVideoFormat) -> Vec<u8> {
         PlatformVideoProfile::H264Main
         | PlatformVideoProfile::H264High
         | PlatformVideoProfile::H264High444Predictive
-        | PlatformVideoProfile::Av1Main => 0,
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => 0,
     };
     let chroma_format_idc = match format.chroma_subsampling {
         PlatformChromaSubsampling::Yuv420 => 1,

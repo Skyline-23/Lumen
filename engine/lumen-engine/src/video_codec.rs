@@ -1,6 +1,7 @@
 pub const VIDEO_FORMAT_H264: i32 = 0;
 pub const VIDEO_FORMAT_HEVC: i32 = 1;
 pub const VIDEO_FORMAT_AV1: i32 = 2;
+pub const VIDEO_FORMAT_SHADOW_VC: i32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LumenVideoCodecPlan {
@@ -10,7 +11,7 @@ pub struct LumenVideoCodecPlan {
 
 pub fn resolve_video_codec(video_format: i32) -> Option<LumenVideoCodecPlan> {
     match video_format {
-        VIDEO_FORMAT_H264 => Some(LumenVideoCodecPlan {
+        VIDEO_FORMAT_H264 | VIDEO_FORMAT_SHADOW_VC => Some(LumenVideoCodecPlan {
             video_format,
             supports_hdr_transport: false,
         }),

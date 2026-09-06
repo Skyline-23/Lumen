@@ -78,6 +78,19 @@ pub(super) fn copy_annex_b_sample(
     if format.is_null() || block.is_null() {
         return Err("encoded sample omitted its format or block buffer".to_owned());
     }
+    if codec == 3 {
+        let length = unsafe { CMBlockBufferGetDataLength(block) };
+        if !(24..=MAXIMUM_VIDEO_BYTES).contains(&length) {
+            return Err("ShadowVC sample size is invalid".to_owned());
+        }
+        let mut payload = vec![0_u8; length];
+        if unsafe { CMBlockBufferCopyDataBytes(block, 0, length, payload.as_mut_ptr().cast()) } != 0 {
+            return Err("could not copy ShadowVC sample".to_owned());
+        }
+        let time = unsafe { CMSampleBufferGetPresentationTimeStamp(sample) };
+        if time.timescale <= 0 || time.value < 0 { return Err("invalid ShadowVC timestamp".into()); }
+        return Ok((payload, ((i128::from(time.value)*90_000)/i128::from(time.timescale)) as u64));
+    }
     let mut count = 0;
     let mut bytes = ptr::null();
     let mut length = 0;

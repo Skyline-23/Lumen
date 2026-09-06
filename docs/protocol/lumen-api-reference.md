@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `b3efc3f6386599632c97bf25bf3b846c55d458e09a3a1f5fd5bf63dd58a6ac60`
+- Contract SHA-256: `6bb33abf2aab138f6e14f1ab38a1fa1d3bfba391199ee85353dee90cf55fc225`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
@@ -34,7 +34,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | Declaration kind | Count |
 | --- | ---: |
 | Enums | 22 |
-| Enum values | 115 |
+| Enum values | 117 |
 | Messages | 42 |
 | Services | 0 |
 | Message fields | 286 |
@@ -49,6 +49,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | <code>lumen.streaming.v4.VideoCodec.VIDEO_CODEC_H264</code> | 1 |
 | <code>lumen.streaming.v4.VideoCodec.VIDEO_CODEC_HEVC</code> | 2 |
 | <code>lumen.streaming.v4.VideoCodec.VIDEO_CODEC_AV1</code> | 3 |
+| <code>lumen.streaming.v4.VideoCodec.VIDEO_CODEC_SHADOW_VC</code> | 4 |
 
 ### enum `lumen.streaming.v4.DynamicRange`
 
@@ -71,6 +72,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_HEVC_MAIN_444</code> | 6 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_HEVC_MAIN_444_10</code> | 7 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_AV1_MAIN</code> | 8 |
+| <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16</code> | 9 |
 
 ### enum `lumen.streaming.v4.ChromaSubsampling`
 

@@ -1,5 +1,32 @@
 # Lumen Streaming Protocol v4
 
+## Optional ShadowVC SpatialBase16 profile
+
+Codec 4 / profile 9 selects the explicitly provisioned FC3 SpatialBase16 V1
+Core AI implementation. Its only format is SDR BT.709, YUV420, 10-bit,
+limited range, with even active dimensions 2..3840 by 2..2160. No HDR
+fallback or scaling is permitted. Missing models or unsupported runtimes
+must reject this selection. H.264 remains the baseline.
+
+The bounded UTF-8 JSON decoder configuration is defined in the protobuf
+`CodecConfiguration` comment. It identifies immutable model weights and
+active dimensions. Each video object is an independent SCV1 access unit:
+four ASCII magic bytes, followed by little-endian uint32 source frame ID,
+width, height and active tile count. Source IDs are nonzero and independent
+of QUIC object IDs. Tiles follow ascending indices in a fixed three-column,
+two-row grid of 1280x1088 cores. Only tiles intersecting the active rectangle
+are present; each has uint32 index, z-stream length, base-stream length,
+then the two entropy streams. Each stream has at least four bytes. A trailing
+uint32 CRC32C covers all preceding bytes; maximum object size is 8 MiB.
+The receiver must reject malformed geometry, model identity, tile order,
+lengths, entropy termination, or CRC before presenting output.
+
+Entropy streams and neural reconstruction are owned by the pinned
+`ShadowVCRuntime` implementation and model CDF. This profile always uses
+q_base 28 / q_detail 52 and no previous-frame dependencies. Configuration
+ACK, reliable bootstrap, media park, and lifecycle fencing retain their
+existing v4 semantics. Independent-frame recovery does not bypass them.
+
 ## Authority
 
 Protocol v4 defines the independent Lumen Object Transport (LOT) over

@@ -31,6 +31,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoCodec: SwiftProtobuf.Enum, Swift
   case h264 // = 1
   case hevc // = 2
   case av1 // = 3
+  case shadowVc // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -43,6 +44,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoCodec: SwiftProtobuf.Enum, Swift
     case 1: self = .h264
     case 2: self = .hevc
     case 3: self = .av1
+    case 4: self = .shadowVc
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -53,6 +55,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoCodec: SwiftProtobuf.Enum, Swift
     case .h264: return 1
     case .hevc: return 2
     case .av1: return 3
+    case .shadowVc: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -63,6 +66,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoCodec: SwiftProtobuf.Enum, Swift
     .h264,
     .hevc,
     .av1,
+    .shadowVc,
   ]
 
 }
@@ -116,6 +120,9 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
   case hevcMain444 // = 6
   case hevcMain44410 // = 7
   case av1Main // = 8
+
+  /// Independent SCV1 frames, q52 FC3 SpatialBase16V1, SDR BT.709 limited P010.
+  case shadowVcSpatialBase16 // = 9
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -133,6 +140,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case 6: self = .hevcMain444
     case 7: self = .hevcMain44410
     case 8: self = .av1Main
+    case 9: self = .shadowVcSpatialBase16
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -148,6 +156,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case .hevcMain444: return 6
     case .hevcMain44410: return 7
     case .av1Main: return 8
+    case .shadowVcSpatialBase16: return 9
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -163,6 +172,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     .hevcMain444,
     .hevcMain44410,
     .av1Main,
+    .shadowVcSpatialBase16,
   ]
 
 }
@@ -1544,6 +1554,11 @@ public nonisolated struct Lumen_Streaming_V4_CodecConfiguration: Sendable {
 
   public var codec: Lumen_Streaming_V4_VideoCodec = .unspecified
 
+  /// SHADOW_VC: bounded (1024 byte) UTF-8 JSON with version=1, model, checkpoint,
+  /// width and height matching the selected mode. The immutable model is
+  /// fc3-spatial-base16-v1; checkpoint SHA256 is
+  /// f8db4b2ec5c1a63ab4d9bb1c1fda16901769e8afe31793fdd4adcfa81a7f0ce2.
+  /// Dimensions must be even, 2..3840 by 2..2160. No in-band scaling.
   public var decoderConfigurationRecord: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2659,7 +2674,7 @@ public nonisolated struct Lumen_Streaming_V4_HostControlEnvelope: Sendable {
 fileprivate nonisolated let _protobuf_package = "lumen.streaming.v4"
 
 nonisolated extension Lumen_Streaming_V4_VideoCodec: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_CODEC_UNSPECIFIED\0\u{1}VIDEO_CODEC_H264\0\u{1}VIDEO_CODEC_HEVC\0\u{1}VIDEO_CODEC_AV1\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_CODEC_UNSPECIFIED\0\u{1}VIDEO_CODEC_H264\0\u{1}VIDEO_CODEC_HEVC\0\u{1}VIDEO_CODEC_AV1\0\u{1}VIDEO_CODEC_SHADOW_VC\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_DynamicRange: SwiftProtobuf._ProtoNameProviding {
@@ -2667,7 +2682,7 @@ nonisolated extension Lumen_Streaming_V4_DynamicRange: SwiftProtobuf._ProtoNameP
 }
 
 nonisolated extension Lumen_Streaming_V4_VideoProfile: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_ChromaSubsampling: SwiftProtobuf._ProtoNameProviding {

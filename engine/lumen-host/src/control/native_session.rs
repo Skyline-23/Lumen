@@ -3459,6 +3459,7 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoCodec::H264 => PlatformVideoCodec::H264,
             NativeVideoCodec::Hevc => PlatformVideoCodec::Hevc,
             NativeVideoCodec::Av1 => PlatformVideoCodec::Av1,
+            NativeVideoCodec::ShadowVc => PlatformVideoCodec::ShadowVc,
             NativeVideoCodec::Unspecified => return None,
         },
         profile: match NativeVideoProfile::try_from(selected.profile).ok()? {
@@ -3472,6 +3473,7 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoProfile::HevcMain444 => PlatformVideoProfile::HevcMain444,
             NativeVideoProfile::HevcMain44410 => PlatformVideoProfile::HevcMain44410,
             NativeVideoProfile::Av1Main => PlatformVideoProfile::Av1Main,
+            NativeVideoProfile::ShadowVcSpatialBase16 => PlatformVideoProfile::ShadowVcSpatialBase16,
             NativeVideoProfile::Unspecified => return None,
         },
         chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)

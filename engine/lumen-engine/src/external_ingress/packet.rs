@@ -7,6 +7,7 @@ use super::{
 
 const VIDEO_FORMAT_H264: i32 = 0;
 const VIDEO_FORMAT_HEVC: i32 = 1;
+const VIDEO_FORMAT_SHADOW_VC: i32 = 3;
 
 #[derive(Debug)]
 pub(super) struct PacketState {
@@ -36,6 +37,7 @@ impl PacketState {
         match frame_codec {
             VIDEO_FORMAT_H264 => Some(VIDEO_FORMAT_H264),
             VIDEO_FORMAT_HEVC => Some(VIDEO_FORMAT_HEVC),
+            VIDEO_FORMAT_SHADOW_VC => Some(VIDEO_FORMAT_SHADOW_VC),
             _ => None,
         }
     }

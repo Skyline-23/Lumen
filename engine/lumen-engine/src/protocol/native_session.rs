@@ -59,6 +59,7 @@ pub fn minimum_video_encoder_bitrate_kbps(
         NativeVideoCodec::H264 => 125_u64,
         NativeVideoCodec::Hevc => 100,
         NativeVideoCodec::Av1 => 90,
+        NativeVideoCodec::ShadowVc => 100,
         NativeVideoCodec::Unspecified => return None,
     };
     let chroma_percentage = match chroma_subsampling {
@@ -158,6 +159,7 @@ pub enum NativeVideoCodec {
     H264 = 1,
     Hevc = 2,
     Av1 = 3,
+    ShadowVc = 4,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -180,6 +182,7 @@ pub enum NativeVideoProfile {
     HevcMain444 = 6,
     HevcMain44410 = 7,
     Av1Main = 8,
+    ShadowVcSpatialBase16 = 9,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -1315,6 +1318,13 @@ fn exact_video_format(format: &NativeVideoFormat) -> Option<ExactVideoFormat> {
             exact.codec == NativeVideoCodec::Av1
                 && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
                 && matches!(exact.bit_depth, 8 | 10)
+        }
+        NativeVideoProfile::ShadowVcSpatialBase16 => {
+            exact.codec == NativeVideoCodec::ShadowVc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && exact.bit_depth == 10
+                && exact.dynamic_range == NativeDynamicRange::Sdr
+                && exact.color_range == NativeColorRange::Limited
         }
         NativeVideoProfile::Unspecified => false,
     };

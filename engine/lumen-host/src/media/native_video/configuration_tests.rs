@@ -124,7 +124,7 @@ fn slice_frame(codec: PlatformVideoCodec, record: Vec<u8>) -> PlatformEncodedVid
         payload: match codec {
             PlatformVideoCodec::H264 => vec![0, 0, 0, 1, 0x65, 0x88],
             PlatformVideoCodec::Hevc => vec![0, 0, 0, 1, 0x26, 0x01, 0x80],
-            PlatformVideoCodec::Av1 => Vec::new(),
+            PlatformVideoCodec::Av1 | PlatformVideoCodec::ShadowVc => Vec::new(),
         },
         decoder_configuration_record: Some(record),
         presentation_time_90khz: 90_000,
