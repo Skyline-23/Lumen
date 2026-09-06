@@ -2190,6 +2190,9 @@ fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig,
         .map_err(|error| format!("QUIC TLS configuration is invalid: {error}"))?;
     let mut config = ServerConfig::with_crypto(Arc::new(crypto));
     let mut transport = TransportConfig::default();
+    // Realtime media needs delivery-rate pacing. Loss-only window growth can
+    // fill a Wi-Fi queue before loss occurs (observed RTT grew 9 -> 80 ms).
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     transport.max_idle_timeout(Some(
         SERVER_MAX_IDLE_TIMEOUT
             .try_into()
