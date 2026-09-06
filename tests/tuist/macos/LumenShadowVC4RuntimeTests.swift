@@ -9,7 +9,7 @@ final class LumenShadowVC4RuntimeTests: XCTestCase {
     func testSourceQuantizationBoundsEveryGrayCodeAndPreservesReferences() async throws {
         let configuration = try ShadowVC4Configuration(width: 256, height: 2)
         XCTAssertThrowsError(try ShadowVC4Encoder(configuration: configuration, sourceQuantizationStep: 3))
-        for step in [UInt32(1), 2, 4] {
+        for step in [UInt32(1), 2, 4, 8] {
             let encoder = try ShadowVC4Encoder(configuration: configuration, sourceQuantizationStep: step)
             let decoder = try ShadowVC4PlaneDecoder(configuration: configuration)
             var pixel: CVPixelBuffer?
