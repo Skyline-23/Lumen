@@ -1842,6 +1842,7 @@ fn finish_video_datagram_delivery(
     sender: &mut VideoSenderState,
     frame_id: u32,
     status: &DatagramBatchStatus,
+    codec: crate::PlatformVideoCodec,
     bootstrap_pending: bool,
     bootstrap_reason: Option<NativeVideoBootstrapReason>,
     bootstrap_requires_encoder_resume: bool,
@@ -1851,7 +1852,7 @@ fn finish_video_datagram_delivery(
     }
     let request_repair = sender.finish_delta_delivery(
         frame_id,
-        *status != DatagramBatchStatus::Complete,
+        *status != DatagramBatchStatus::Complete && codec != crate::PlatformVideoCodec::ShadowVc,
         bootstrap_pending,
         bootstrap_reason,
         bootstrap_requires_encoder_resume,
@@ -2395,6 +2396,7 @@ async fn poll_and_send_video(
         sender,
         frame_id,
         &report.status,
+        delivery.video_format.codec,
         delivery.bootstrap_pending,
         delivery.bootstrap_reason,
         delivery.bootstrap_requires_encoder_resume,
@@ -3251,7 +3253,7 @@ mod tests {
         let mut sender = VideoSenderState::default();
         let initial_frame_id = sender.frame_id;
         let completion =
-            finish_video_datagram_delivery(&mut sender, 41, &report.status, false, None, false)
+            finish_video_datagram_delivery(&mut sender, 41, &report.status, crate::PlatformVideoCodec::Hevc, false, None, false)
                 .expect("terminal transport classification");
         assert_eq!(
             completion,
@@ -3341,6 +3343,22 @@ mod tests {
         normalized.frame.repair_keyframe = false;
         normalized.frame.requires_bootstrap_acknowledgement = true;
         assert!(needs_reliable_video_bootstrap(codec, &normalized, true));
+    }
+
+    #[test]
+    fn lost_independent_frame_does_not_trigger_a_reference_repair_loop() {
+        let mut sender = VideoSenderState::default();
+        let status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate);
+        for frame_id in 1..=3 {
+            assert_eq!(finish_video_datagram_delivery(&mut sender, frame_id, &status,
+                crate::PlatformVideoCodec::ShadowVc, false, None, false).unwrap(),
+                VideoDatagramCompletion::Continue { request_repair: false });
+            assert!(!sender.repair_required);
+            assert_eq!(sender.frame_id, frame_id + 1);
+        }
+        assert_eq!(finish_video_datagram_delivery(&mut sender, 4, &status,
+            crate::PlatformVideoCodec::Hevc, false, None, false).unwrap(),
+            VideoDatagramCompletion::Continue { request_repair: true });
     }
 
     #[test]
