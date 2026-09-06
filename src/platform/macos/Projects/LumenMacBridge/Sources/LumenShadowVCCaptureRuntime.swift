@@ -58,11 +58,11 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         let generation = epoch.load(ordering: .acquiring)
         let encoder: Codec
         if configuration.videoProfile == .shadowVCRegionalPredictor8 {
-            // Bound input error to four 8-bit plane codes while reducing the
+            // Bound input error to two 8-bit plane codes while reducing the
             // cost of moving text. SCV2 reconstructs these input codes exactly.
             encoder = .regional(try ShadowVC4Encoder(
                 configuration: .init(width: width, height: height),
-                sourceQuantizationStep: 8
+                sourceQuantizationStep: 4
             ))
         } else {
             guard configuration.videoProfile == .shadowVCSpatialBase16, let modelDirectory else {
