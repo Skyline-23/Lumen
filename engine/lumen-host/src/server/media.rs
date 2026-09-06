@@ -1655,6 +1655,23 @@ fn needs_reliable_video_bootstrap(
             || normalized.frame.requires_bootstrap_acknowledgement)
 }
 
+fn retain_independent_video_repair(
+    codec: crate::PlatformVideoCodec,
+    repair_requested: bool,
+    bootstrap_pending: bool,
+    normalized: &mut NormalizedNativeVideoFrame,
+) {
+    // The platform's one-shot repair marker can be evicted from its bounded
+    // capture queue. Any SCV1 frame can satisfy the still-pending request.
+    if codec == crate::PlatformVideoCodec::ShadowVc
+        && repair_requested
+        && !bootstrap_pending
+        && normalized.frame.key_frame
+    {
+        normalized.frame.repair_keyframe = true;
+    }
+}
+
 impl VideoSenderState {
     fn enter_parked(&mut self) {
         self.packetizer = None;
@@ -2073,7 +2090,13 @@ async fn poll_and_send_video(
         sender.pending_media_delivery_generation = Some(delivery.media_delivery_generation);
     }
 
-    let normalized = sender.pending_frame.as_ref().expect("staged video frame");
+    let normalized = sender.pending_frame.as_mut().expect("staged video frame");
+    retain_independent_video_repair(
+        delivery.video_format.codec,
+        delivery.repair_keyframe_requested,
+        delivery.bootstrap_pending,
+        normalized,
+    );
     if delivery.acknowledged_configuration_id != Some(normalized.configuration_id) {
         return MediaAttempt::Waiting;
     }
@@ -2548,7 +2571,7 @@ mod tests {
         finish_video_keyframe_delivery, four_refresh_frame_wire_window_us,
         object_deadline_exceeded, periodic_keyframe_deadline_cap_us,
         periodic_keyframe_drop_requires_wire_pressure, publish_video_keyframe,
-        needs_reliable_video_bootstrap,
+        needs_reliable_video_bootstrap, retain_independent_video_repair,
         record_successful_datagram, run_native_media_tasks, send_admitted_datagram,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
         video_datagram_deadline_us, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
@@ -3343,6 +3366,37 @@ mod tests {
         normalized.frame.repair_keyframe = false;
         normalized.frame.requires_bootstrap_acknowledgement = true;
         assert!(needs_reliable_video_bootstrap(codec, &normalized, true));
+    }
+
+    #[test]
+    fn independent_frame_satisfies_repair_after_platform_marker_was_dropped() {
+        let mut normalized = NormalizedNativeVideoFrame {
+            frame: crate::PlatformEncodedVideoFrame {
+                payload: vec![1, 2, 3, 4],
+                decoder_configuration_record: None,
+                presentation_time_90khz: 90_000,
+                key_frame: true,
+                requires_bootstrap_acknowledgement: false,
+                repair_keyframe: false,
+            },
+            configuration_id: 1,
+            new_configuration: None,
+        };
+        let codec = crate::PlatformVideoCodec::ShadowVc;
+        retain_independent_video_repair(codec, true, true, &mut normalized);
+        assert!(!needs_reliable_video_bootstrap(codec, &normalized, true));
+        retain_independent_video_repair(crate::PlatformVideoCodec::Hevc, true, false, &mut normalized);
+        assert!(!normalized.frame.repair_keyframe);
+        retain_independent_video_repair(codec, false, false, &mut normalized);
+        assert!(!needs_reliable_video_bootstrap(codec, &normalized, true));
+        retain_independent_video_repair(codec, true, false, &mut normalized);
+        assert!(needs_reliable_video_bootstrap(codec, &normalized, true));
+        let classification = publish_video_keyframe(&normalized, 71, true,
+            |classification, _, _, _, _| {
+                assert_eq!(classification.reason, NativeVideoBootstrapReason::Repair);
+                Some(6)
+            }).unwrap();
+        assert_eq!(classification.reason, NativeVideoBootstrapReason::Repair);
     }
 
     #[test]
