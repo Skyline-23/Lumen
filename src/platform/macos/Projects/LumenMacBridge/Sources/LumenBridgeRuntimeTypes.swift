@@ -4,6 +4,7 @@ import LumenEngineBridge
 public enum LumenCaptureCodec: String, CaseIterable, Codable, Sendable {
     case h264
     case hevc
+    case shadowVC
 }
 
 public enum LumenCapturePreprocessStrategy: String, CaseIterable, Codable, Sendable {

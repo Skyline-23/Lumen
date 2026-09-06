@@ -176,7 +176,8 @@ void LumenMacScreenCaptureWarmInventory(void);
 typedef enum LumenMacCaptureCodec {
   LumenMacCaptureCodecUnknown = -1,
   LumenMacCaptureCodecH264 = 0,
-  LumenMacCaptureCodecHEVC = 1
+  LumenMacCaptureCodecHEVC = 1,
+  LumenMacCaptureCodecShadowVC = 3
 } LumenMacCaptureCodec;
 
 typedef enum LumenMacCaptureVideoProfile {
@@ -186,7 +187,8 @@ typedef enum LumenMacCaptureVideoProfile {
   LumenMacCaptureVideoProfileHEVCMain = 3,
   LumenMacCaptureVideoProfileHEVCMain10 = 4,
   LumenMacCaptureVideoProfileHEVCMain444 = 5,
-  LumenMacCaptureVideoProfileHEVCMain44410 = 6
+  LumenMacCaptureVideoProfileHEVCMain44410 = 6,
+  LumenMacCaptureVideoProfileShadowVCSpatialBase16 = 8
 } LumenMacCaptureVideoProfile;
 
 typedef enum LumenMacCaptureChromaSubsampling {

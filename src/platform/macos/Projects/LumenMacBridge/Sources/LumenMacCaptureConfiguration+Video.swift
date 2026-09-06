@@ -83,6 +83,8 @@ extension LumenMacCaptureConfiguration {
             return kCVPixelFormatType_32BGRA
         }
         switch codec {
+        case .shadowVC:
+            return kCVPixelFormatType_32BGRA
         case .h264:
             return kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         case .hevc:

@@ -7,6 +7,8 @@ extension LumenBridgeObjCFacade {
             return .h264
         case Int(LumenMacCaptureCodecHEVC.rawValue):
             return .hevc
+        case Int(LumenMacCaptureCodecShadowVC.rawValue):
+            return .shadowVC
         default:
             return .hevc
         }
@@ -79,6 +81,8 @@ extension LumenBridgeObjCFacade {
             return Int(LumenMacCaptureCodecH264.rawValue)
         case .hevc:
             return Int(LumenMacCaptureCodecHEVC.rawValue)
+        case .shadowVC:
+            return Int(LumenMacCaptureCodecShadowVC.rawValue)
         }
     }
 

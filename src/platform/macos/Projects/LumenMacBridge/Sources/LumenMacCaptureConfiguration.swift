@@ -54,12 +54,12 @@ public struct LumenMacCaptureConfiguration: Equatable, Sendable {
         self.policyRevision = policyRevision
         self.codec = codec
         self.videoProfile = videoProfile ?? (
-            codec == .h264
+            codec == .shadowVC ? .shadowVCSpatialBase16 : codec == .h264
                 ? .h264High
                 : (defaultsToHDR ? .hevcMain10 : .hevcMain)
         )
         self.chromaSubsampling = chromaSubsampling ?? .yuv420
-        self.bitDepth = bitDepth ?? (defaultsToHDR ? 10 : 8)
+        self.bitDepth = bitDepth ?? (defaultsToHDR || codec == .shadowVC ? 10 : 8)
         self.dynamicRange = dynamicRange ?? (defaultsToHDR ? .hdr10 : .sdr)
         self.colorRange = colorRange ?? .limited
         self.preprocessStrategy = preprocessStrategy
@@ -120,6 +120,7 @@ extension LumenMacCaptureConfiguration {
     }
 
     public var negotiatedDynamicRangeTransport: LumenMacDynamicRangeTransport {
+        if codec == .shadowVC { return LumenMacDynamicRangeTransportSDR }
         switch sinkRequest.dynamicRangeTransport {
         case LumenMacDynamicRangeTransportFullFrameHDR:
             guard sinkPrefersHDRPresentation else {

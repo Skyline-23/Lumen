@@ -58,6 +58,12 @@ let nativeAssetsScript = TargetScript.post(
     rm -rf "${ASSETS_ROOT}"
     mkdir -p "${ASSETS_ROOT}"
 
+    MODEL_SOURCE="${REPO_ROOT}/artifacts/ShadowVCModels"
+    rm -rf "${RESOURCES_ROOT}/ShadowVCModels"
+    if [ -f "${MODEL_SOURCE}/model.json" ]; then
+        ditto --norsrc --noextattr "${MODEL_SOURCE}" "${RESOURCES_ROOT}/ShadowVCModels"
+    fi
+
     rsync -a "${REPO_ROOT}/src_assets/common/assets/" "${ASSETS_ROOT}/"
     rsync -a --exclude 'Info.plist' "${REPO_ROOT}/src_assets/macos/assets/" "${ASSETS_ROOT}/"
 
@@ -86,7 +92,7 @@ let project = Project(
         developmentRegion: "en",
         disableSynthesizedResourceAccessors: true
     ),
-    packages: [swiftOpusPackage],
+    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("e2f2d04409f21f98c068c1a7a2f6005831d57474"))],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -135,6 +141,7 @@ let project = Project(
             dependencies: [
                 .target(name: "LumenEngineBridge"),
                 .package(product: "COpus"),
+                .package(product: "ShadowVCRuntime"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "AVFoundation", type: .framework),
                 .sdk(name: "CoreAudio", type: .framework),

@@ -1999,7 +1999,7 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
         NativeVideoCodec, NativeVideoFormat, NativeVideoProfile,
     };
 
-    [
+    let mut capabilities: Vec<NativeVideoCapability> = [
         (
             NativeVideoCodec::H264,
             NativeVideoProfile::H264High,
@@ -2066,7 +2066,31 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             hardware_accelerated: Some(true),
         },
     )
-    .collect()
+    .collect();
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    if shadow_vc_model_is_provisioned() {
+        capabilities.push(NativeVideoCapability {
+            format: Some(NativeVideoFormat { codec: NativeVideoCodec::ShadowVc as i32,
+                profile: NativeVideoProfile::ShadowVcSpatialBase16 as i32,
+                chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32, bit_depth: 10,
+                dynamic_range: NativeDynamicRange::Sdr as i32, color_range: NativeColorRange::Limited as i32 }),
+            max_width: 3840, max_height: 2160, max_refresh_millihz: 240_000,
+            hardware_accelerated: Some(true),
+        });
+    }
+    capabilities
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn shadow_vc_model_is_provisioned() -> bool {
+    let supported_os = std::process::Command::new("/usr/bin/sw_vers").arg("-productVersion")
+        .output().ok().filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major >= 27);
+    let model = std::env::current_exe().ok().and_then(|path|
+        path.parent()?.parent().map(|contents| contents.join("Resources/ShadowVCModels/model.json")));
+    supported_os && model.is_some_and(|path| path.is_file())
 }
 
 fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, String> {

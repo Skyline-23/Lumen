@@ -1,6 +1,14 @@
 {
-  "originHash" : "368cb9d75fa023b36c6f217d76c84cefdda7f2fa7d9a333dd38caffd0c6565ce",
+  "originHash" : "20977187ba83acf5b721bf2ea3300ea5a100e4c5f0f0901f7181aa09ee9953e9",
   "pins" : [
+    {
+      "identity" : "shadowvc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Skyline-23/shadowvc.git",
+      "state" : {
+        "revision" : "e2f2d04409f21f98c068c1a7a2f6005831d57474"
+      }
+    },
     {
       "identity" : "swiftopus",
       "kind" : "remoteSourceControl",

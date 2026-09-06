@@ -1435,6 +1435,7 @@ public struct LumenVideoToolboxProbeStatuses: Equatable, Sendable {
 }
 
 public enum LumenVideoToolboxParsedConfiguration: Equatable, Sendable {
+    case shadowVC
     case h264(profileIdc: Int)
     case hevc(chromaFormatIdc: Int, lumaBitDepth: Int, chromaBitDepth: Int)
 

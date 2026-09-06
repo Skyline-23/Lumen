@@ -207,10 +207,17 @@ protocol LumenEncodedCaptureRuntimeFactory: Sendable {
 
 struct LumenProductionCaptureRuntimeFactory:
     LumenEncodedCaptureRuntimeFactory {
+    var shadowVCModelDirectory: URL? = nil
     func makeRuntime(
         context: LumenEncodedCaptureRuntimeContext
     ) throws -> any LumenEncodedCaptureRuntime {
-        try LumenScreenCaptureVideoRuntime(
+        if context.configuration.codec == .shadowVC {
+            guard #available(macOS 27, *), let shadowVCModelDirectory else {
+                throw LumenExactCaptureError.invalidFormat("ShadowVC requires macOS 27 and a verified model bundle")
+            }
+            return LumenShadowVCCaptureRuntime(context: context, modelDirectory: shadowVCModelDirectory)
+        }
+        return try LumenScreenCaptureVideoRuntime(
             configuration: context.configuration,
             callbacks: context.callbacks,
             statisticsHandler: context.statisticsHandler,

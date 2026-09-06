@@ -11,7 +11,7 @@ private enum LumenMacBridgeCompositionRoot {
             systemAudioPlaybackSuppression:
                 makeSystemAudioCaptureSource(),
             encodedCaptureRuntimeFactory:
-                LumenProductionCaptureRuntimeFactory()
+                LumenProductionCaptureRuntimeFactory(shadowVCModelDirectory: Bundle.main.url(forResource: "ShadowVCModels", withExtension: nil))
         )
     }
 

@@ -203,6 +203,8 @@ extension LumenScreenCaptureVideoRuntime {
             return
         }
         switch configuration.codec {
+        case .shadowVC:
+            return
         case .h264:
             let parsed = configurationData.flatMap(
                 LumenVideoToolboxCodecConfigurationParser.parseAVCC

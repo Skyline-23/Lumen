@@ -152,6 +152,8 @@ extension LumenScreenCaptureVideoRuntime {
             kCMVideoCodecType_H264
         case .hevc:
             kCMVideoCodecType_HEVC
+        case .shadowVC:
+            0x53435631
         }
     }
 
