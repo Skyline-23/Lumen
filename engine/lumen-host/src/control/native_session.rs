@@ -1586,6 +1586,9 @@ impl ControlRouter {
             }
         }
         pending.acknowledged_generation_id = Some(result.generation_id);
+        // A decoded reliable bootstrap is delivered video too. A repair request
+        // may cite it before any DATAGRAM in this generation has been sent.
+        pending.last_sent_video_frame_id = pending.last_sent_video_frame_id.max(result.frame_id);
         pending.last_video_bootstrap_acknowledgement = Some(result.clone());
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;

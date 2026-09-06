@@ -1383,6 +1383,23 @@ fn decoded_bootstraps_resume_only_the_generation_that_owns_encoder_admission() {
         )
         .is_empty());
     assert!(!router.native_video_keyframe_request_is_outstanding());
+    let next_repair = router.dispatch_native_control(
+        ClientControlEnvelope {
+            request_id: 9,
+            payload: Some(client_control_envelope::Payload::VideoKeyframeRequest(
+                VideoKeyframeRequest {
+                    session_epoch: context.session_epoch,
+                    stream_id: plan.video_stream_id,
+                    after_frame_id: 122,
+                    reason: NativeVideoKeyframeRequestReason::IncompleteUnit as i32,
+                    generation_id: repair_generation,
+                },
+            )),
+        },
+        &context,
+    );
+    assert!(next_repair.is_empty(), "decoded bootstrap must be a valid repair anchor");
+    assert!(router.native_video_keyframe_request_is_outstanding());
     assert_eq!(
         platform
             .control_events
