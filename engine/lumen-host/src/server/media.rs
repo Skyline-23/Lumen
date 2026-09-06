@@ -1642,6 +1642,19 @@ fn classify_video_keyframe_delivery(
     )
 }
 
+fn needs_reliable_video_bootstrap(
+    codec: crate::PlatformVideoCodec,
+    normalized: &NormalizedNativeVideoFrame,
+    has_acknowledged_generation: bool,
+) -> bool {
+    normalized.frame.key_frame
+        && (codec != crate::PlatformVideoCodec::ShadowVc
+            || !has_acknowledged_generation
+            || normalized.new_configuration.is_some()
+            || normalized.frame.repair_keyframe
+            || normalized.frame.requires_bootstrap_acknowledgement)
+}
+
 impl VideoSenderState {
     fn enter_parked(&mut self) {
         self.packetizer = None;
@@ -2070,6 +2083,16 @@ async fn poll_and_send_video(
         return MediaAttempt::Dropped;
     }
     if delivery.bootstrap_pending {
+        // SCV1 frames have no inter-frame dependencies. A dropped frame while
+        // awaiting the bootstrap ACK cannot invalidate the next frame, so it
+        // must not schedule another bootstrap/repair cycle after that ACK.
+        if delivery.video_format.codec == crate::PlatformVideoCodec::ShadowVc
+            && !normalized.frame.repair_keyframe
+        {
+            sender.pending_frame = None;
+            sender.pending_since = None;
+            return MediaAttempt::Dropped;
+        }
         // Retain at most one fresh dependent frame for one negotiated object deadline. If the
         // bootstrap ACK is slower, drain later encoded frames without requesting another IDR;
         // one owned repair is requested only after the pending generation is acknowledged.
@@ -2135,7 +2158,11 @@ async fn poll_and_send_video(
         return MediaAttempt::Dropped;
     }
     let frame_id = sender.frame_id;
-    if normalized.frame.key_frame {
+    if needs_reliable_video_bootstrap(
+        delivery.video_format.codec,
+        normalized,
+        delivery.acknowledged_generation_id.is_some(),
+    ) {
         let publication = publish_video_keyframe(
             normalized,
             frame_id,
@@ -2164,9 +2191,10 @@ async fn poll_and_send_video(
         return MediaAttempt::Waiting;
     }
 
-    // Reference frames return through the independent reliable bootstrap
-    // stream above. The DATAGRAM path below therefore carries deltas only.
-    let same_generation_periodic_keyframe = false;
+    // Predictive codecs carry their reference frames through the reliable
+    // bootstrap lane. Independent SCV1 frames retain their keyframe flag in
+    // DATAGRAMs without creating a new generation for every captured frame.
+    let same_generation_periodic_keyframe = normalized.frame.key_frame;
 
     let Some(generation_id) = delivery.acknowledged_generation_id else {
         return MediaAttempt::Waiting;
@@ -2518,6 +2546,7 @@ mod tests {
         finish_video_keyframe_delivery, four_refresh_frame_wire_window_us,
         object_deadline_exceeded, periodic_keyframe_deadline_cap_us,
         periodic_keyframe_drop_requires_wire_pressure, publish_video_keyframe,
+        needs_reliable_video_bootstrap,
         record_successful_datagram, run_native_media_tasks, send_admitted_datagram,
         send_datagram_batch, send_video_datagram_batch, send_wire_paced_video_datagram_batch,
         video_datagram_deadline_us, wait_for_datagram_deadline, wait_for_datagram_queue_capacity,
@@ -3274,6 +3303,44 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn shadow_vc_steady_frames_keep_the_acknowledged_datagram_generation() {
+        use crate::media::native_packet::{NativeMediaPacketizer, NativeMediaPacketizerConfig};
+        use lumen_engine::NativeMediaKind;
+        let mut normalized = NormalizedNativeVideoFrame {
+            frame: crate::PlatformEncodedVideoFrame {
+                payload: vec![1, 2, 3, 4],
+                decoder_configuration_record: None,
+                presentation_time_90khz: 90_000,
+                key_frame: true,
+                requires_bootstrap_acknowledgement: false,
+                repair_keyframe: false,
+            },
+            configuration_id: 1,
+            new_configuration: None,
+        };
+        let codec = crate::PlatformVideoCodec::ShadowVc;
+        assert!(needs_reliable_video_bootstrap(codec, &normalized, false));
+        let mut packetizer = NativeMediaPacketizer::new(NativeMediaPacketizerConfig {
+            kind: NativeMediaKind::VideoDelta,
+            maximum_datagram_payload: 1200,
+            generation_id: 1,
+        }, 0).unwrap();
+        for frame_id in 2..=121 {
+            assert!(!needs_reliable_video_bootstrap(codec, &normalized, true));
+            assert!(!packetizer.packetize_video_delta(&normalized.frame, frame_id, 0)
+                .unwrap().datagrams.is_empty());
+        }
+        for predictive in [crate::PlatformVideoCodec::H264, crate::PlatformVideoCodec::Hevc] {
+            assert!(needs_reliable_video_bootstrap(predictive, &normalized, true));
+        }
+        normalized.frame.repair_keyframe = true;
+        assert!(needs_reliable_video_bootstrap(codec, &normalized, true));
+        normalized.frame.repair_keyframe = false;
+        normalized.frame.requires_bootstrap_acknowledgement = true;
+        assert!(needs_reliable_video_bootstrap(codec, &normalized, true));
     }
 
     #[test]

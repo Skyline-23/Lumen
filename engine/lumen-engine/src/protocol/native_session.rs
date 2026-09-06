@@ -50,6 +50,21 @@ pub fn minimum_video_encoder_bitrate_kbps(
     {
         return None;
     }
+    if codec == NativeVideoCodec::ShadowVc {
+        // FC3 has 24 base channels at stride 16 and 24 hyperprior channels at
+        // stride 64. Reserve one byte per active symbol for startup, plus the
+        // SCV1/tile/rANS framing. This is a pacing estimate, not an entropy
+        // upper bound or a bitrate knob: the fixed-q model cannot obey the
+        // much smaller inter-frame H.26x quality floor below.
+        let cells = |stride: u32| u64::from(width.div_ceil(stride))
+            .checked_mul(u64::from(height.div_ceil(stride)));
+        let tiles = u64::from(width.div_ceil(1280))
+            .checked_mul(u64::from(height.div_ceil(1088)))?;
+        let bytes = cells(16)?.checked_add(cells(64)?)?.checked_mul(24)?
+            .checked_add(24)?.checked_add(tiles.checked_mul(20)?)?;
+        return u32::try_from(bytes.checked_mul(8)?
+            .checked_mul(u64::from(refresh_millihz))?.div_ceil(1_000_000)).ok();
+    }
     let millibits_per_pixel = match dynamic_range {
         NativeDynamicRange::Sdr => SDR_MINIMUM_MILLIBITS_PER_PIXEL,
         NativeDynamicRange::Hdr10 => HDR_MINIMUM_MILLIBITS_PER_PIXEL,

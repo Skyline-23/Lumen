@@ -715,6 +715,20 @@ fn hdr_retina_sixty_fps_negotiation_enforces_the_encoder_quality_floor() {
 }
 
 #[test]
+fn shadow_vc_startup_budget_carries_native_ipad_frames_at_requested_cadence() {
+    let encoder = minimum_video_encoder_bitrate_kbps(
+        2_816, 1_826, 120_000, NativeVideoCodec::ShadowVc,
+        NativeChromaSubsampling::Yuv420, 10, NativeDynamicRange::Sdr,
+    ).unwrap();
+    // Measured native iPad SCV1 frame and its 20% FEC DATAGRAM footprint.
+    assert!(u64::from(encoder) * 1_000 >= 346_527 * 8 * 120);
+    let wire = super::native_session::native_video_wire_bitrate_kbps(
+        encoder, 120_000, 1_200, 20,
+    ).unwrap();
+    assert!(u64::from(wire) * 1_000 >= 436_410 * 8 * 120);
+}
+
+#[test]
 fn encoder_quality_floor_scales_exact_codec_chroma_and_bit_depth() {
     let floor = |codec, chroma_subsampling, bit_depth, dynamic_range| {
         minimum_video_encoder_bitrate_kbps(
