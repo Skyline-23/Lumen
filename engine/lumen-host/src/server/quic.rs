@@ -199,6 +199,73 @@ impl ControlStreamLifecycle {
     }
 }
 
+fn bind_native_server_endpoint(
+    config: ServerConfig,
+    address: SocketAddr,
+) -> std::io::Result<Endpoint> {
+    #[cfg(target_os = "macos")]
+    {
+        let socket = std::net::UdpSocket::bind(address)?;
+        configure_screen_sharing_socket(&socket)?;
+        Endpoint::new(
+            Default::default(),
+            Some(config),
+            socket,
+            Arc::new(quinn::TokioRuntime),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    Endpoint::server(config, address)
+}
+
+#[cfg(target_os = "macos")]
+fn configure_screen_sharing_socket(socket: &std::net::UdpSocket) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // Darwin's public sys/socket.h specifies RV for screen sharing: variable
+    // packet intervals with low delay tolerance. These public constants are
+    // not exposed by libc. Scope the classification to this media socket.
+    const SO_NET_SERVICE_TYPE: libc::c_int = 0x1116;
+    const NET_SERVICE_TYPE_RV: libc::c_int = 5;
+    let service = NET_SERVICE_TYPE_RV;
+    // SAFETY: the socket is live and the argument points to a sized c_int.
+    let result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            SO_NET_SERVICE_TYPE,
+            (&service as *const libc::c_int).cast(),
+            std::mem::size_of_val(&service) as libc::socklen_t,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn native_screen_sharing_socket_uses_responsive_multimedia_service() {
+    use std::os::fd::AsRawFd;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    configure_screen_sharing_socket(&socket).unwrap();
+    let mut service: libc::c_int = -1;
+    let mut size = std::mem::size_of_val(&service) as libc::socklen_t;
+    // SAFETY: both output pointers remain valid for their declared sizes.
+    let result = unsafe {
+        libc::getsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            0x1116,
+            (&mut service as *mut libc::c_int).cast(),
+            &mut size,
+        )
+    };
+    assert_eq!(result, 0);
+    assert_eq!(service, 5);
+}
+
 fn run_server(
     config: ServerConfig,
     address: SocketAddr,
@@ -216,7 +283,7 @@ fn run_server(
         }
     };
     runtime.block_on(async move {
-        let endpoint = match Endpoint::server(config, address) {
+        let endpoint = match bind_native_server_endpoint(config, address) {
             Ok(endpoint) => endpoint,
             Err(error) => {
                 let _ = ready.send(Err(format!("could not bind QUIC session server: {error}")));
