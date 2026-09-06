@@ -87,10 +87,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         settings.minimumFrameInterval = mode.refreshRate > 0
             && mode.refreshRate <= Double(configuration.targetFrameRate)
             ? .zero : CMTime(value: 1, timescale: Int32(configuration.targetFrameRate))
-        // Encoding retains the active surface across asynchronous Metal and
-        // plane work. Give SCK room to render while that surface is retained;
-        // the consumer below still stores only the newest pending frame.
-        settings.queueDepth = 6; settings.showsCursor = true
+        settings.queueDepth = 3; settings.showsCursor = true
         let (frames, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let output = LumenShadowVCStreamOutput(continuation: continuation,
             currentEpoch: { [weak self] in self?.epoch.load(ordering: .acquiring) ?? 0 }, failed: context.terminationHandler)
