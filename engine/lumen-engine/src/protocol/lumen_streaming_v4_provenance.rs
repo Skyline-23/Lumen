@@ -1,6 +1,6 @@
 pub const LUMEN_STREAMING_PROTOCOL_PACKAGE: &str = "lumen.streaming.v4";
 pub const LUMEN_STREAMING_PROTOCOL_ALPN: &[u8] = b"lumen-stream/4";
 pub const LUMEN_STREAMING_SCHEMA_SHA256: &str =
-    "f7031e4e058db5ed274b94b81dc767878a62d034330218977b0d2b6165e80fdf";
+    "39eac0dfd6e7f04a1cde655e1324a960f804c17e80753364dc8e00332d114775";
 pub const LUMEN_STREAMING_DESCRIPTOR_SHA256: &str =
-    "4ed6afc3c83471deb0b8fa42b3ddb3221c30a4df5e0ecc357bf9d5b32e1efb6e";
+    "ed0db96fc6c5ef949bfa57c6756b8cf7cec2061f657eb597496374e88acaf2a6";
