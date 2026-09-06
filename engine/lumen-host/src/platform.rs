@@ -62,6 +62,7 @@ pub enum PlatformVideoProfile {
     HevcMain44410,
     Av1Main,
     ShadowVcSpatialBase16,
+    ShadowVcRegionalPredictor8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -352,6 +353,7 @@ pub enum LumenHostPlatformVideoProfile {
     HevcMain44410 = 6,
     Av1Main = 7,
     ShadowVcSpatialBase16 = 8,
+    ShadowVcRegionalPredictor8 = 9,
 }
 
 #[repr(C)]
@@ -521,6 +523,7 @@ impl From<PlatformSessionPlan> for LumenHostPlatformSessionPlan {
                 PlatformVideoProfile::HevcMain44410 => LumenHostPlatformVideoProfile::HevcMain44410,
                 PlatformVideoProfile::Av1Main => LumenHostPlatformVideoProfile::Av1Main,
                 PlatformVideoProfile::ShadowVcSpatialBase16 => LumenHostPlatformVideoProfile::ShadowVcSpatialBase16,
+                PlatformVideoProfile::ShadowVcRegionalPredictor8 => LumenHostPlatformVideoProfile::ShadowVcRegionalPredictor8,
             },
             chroma_subsampling: match plan.video_format.chroma_subsampling {
                 PlatformChromaSubsampling::Yuv420 => LumenHostPlatformChromaSubsampling::Yuv420,

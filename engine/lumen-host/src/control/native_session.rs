@@ -1115,7 +1115,10 @@ impl ControlRouter {
         if let Some(requested_format) = hello.requested_video_format.clone() {
             for capability in &mut hello.video_capabilities {
                 if capability.format.as_ref() == Some(&requested_format)
-                    && capability.hardware_accelerated == Some(true)
+                    && (capability.hardware_accelerated == Some(true)
+                        || (capability.hardware_accelerated == Some(false)
+                            && requested_format.profile
+                                == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32))
                 {
                     capability.max_width = request.width;
                     capability.max_height = request.height;
@@ -1942,6 +1945,16 @@ impl ControlRouter {
         let Some(pending) = self.native.pending.as_ref() else {
             return Err("native session has not been negotiated".to_owned());
         };
+        // FC4's reversible integer reference has no accumulated reconstruction
+        // drift. Gaps/CRC failures already request acknowledged independent
+        // repair. Periodic refresh would stall healthy capture for the large
+        // reliable bootstrap and its acknowledgement without improving quality.
+        if pending.plan.selected_video_capability.as_ref()
+            .and_then(|capability| capability.format.as_ref())
+            .is_some_and(|format| format.profile == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32)
+        {
+            return Ok(false);
+        }
         if !pending.active
             || pending.plan.session_epoch != session_epoch
             || pending.acknowledged_configuration_id.is_none()
@@ -3477,6 +3490,7 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoProfile::HevcMain44410 => PlatformVideoProfile::HevcMain44410,
             NativeVideoProfile::Av1Main => PlatformVideoProfile::Av1Main,
             NativeVideoProfile::ShadowVcSpatialBase16 => PlatformVideoProfile::ShadowVcSpatialBase16,
+            NativeVideoProfile::ShadowVcRegionalPredictor8 => PlatformVideoProfile::ShadowVcRegionalPredictor8,
             NativeVideoProfile::Unspecified => return None,
         },
         chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)

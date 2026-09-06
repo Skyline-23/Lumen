@@ -152,6 +152,38 @@ fn generation_four_negotiates_each_exact_hardware_video_row() {
 }
 
 #[test]
+fn regional_predictor_negotiates_explicit_cpu_capabilities() {
+    let format = NativeVideoFormat {
+        codec: NativeVideoCodec::ShadowVc as i32,
+        profile: NativeVideoProfile::ShadowVcRegionalPredictor8 as i32,
+        chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+        bit_depth: 10,
+        dynamic_range: NativeDynamicRange::Sdr as i32,
+        color_range: NativeColorRange::Limited as i32,
+    };
+    let mut capability = capability_with_format(format.clone());
+    capability.hardware_accelerated = Some(false);
+    let mut client = hello();
+    client.sink_transfer = NativeDisplayTransfer::Sdr as i32;
+    client.requested_video_format = Some(format);
+    client.video_capabilities = vec![capability.clone()];
+    let mut host = host();
+    host.video_capabilities = vec![capability];
+    let plan = negotiate_native_session(&client, &host, 9).unwrap();
+    assert_eq!(plan.selected_video_capability.unwrap().hardware_accelerated, Some(false));
+    client.video_capabilities[0].hardware_accelerated = None;
+    assert!(negotiate_native_session(&client, &host, 9).is_err());
+    // CPU admission is specific to FC4, not a general software decoder fallback.
+    let mut legacy = capability_with_format(client.requested_video_format.clone().unwrap());
+    legacy.format.as_mut().unwrap().profile = NativeVideoProfile::ShadowVcSpatialBase16 as i32;
+    legacy.hardware_accelerated = Some(false);
+    client.requested_video_format = legacy.format.clone();
+    client.video_capabilities = vec![legacy.clone()];
+    host.video_capabilities = vec![legacy];
+    assert!(negotiate_native_session(&client, &host, 9).is_err());
+}
+
+#[test]
 fn shadow_vc_rejects_odd_rotated_and_oversized_geometry() {
     let format = NativeVideoFormat {
         codec: NativeVideoCodec::ShadowVc as i32,

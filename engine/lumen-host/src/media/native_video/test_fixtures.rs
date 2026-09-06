@@ -96,7 +96,7 @@ fn avc_sps(format: PlatformVideoFormat) -> Vec<u8> {
         | PlatformVideoProfile::HevcMain10
         | PlatformVideoProfile::HevcMain444
         | PlatformVideoProfile::HevcMain44410
-        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => 0,
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 | PlatformVideoProfile::ShadowVcRegionalPredictor8 => 0,
     };
     let chroma_format_idc = match format.chroma_subsampling {
         PlatformChromaSubsampling::Yuv420 => 1,
@@ -139,7 +139,7 @@ fn hevc_sps(format: PlatformVideoFormat) -> Vec<u8> {
         PlatformVideoProfile::H264Main
         | PlatformVideoProfile::H264High
         | PlatformVideoProfile::H264High444Predictive
-        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => 0,
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 | PlatformVideoProfile::ShadowVcRegionalPredictor8 => 0,
     };
     let chroma_format_idc = match format.chroma_subsampling {
         PlatformChromaSubsampling::Yuv420 => 1,

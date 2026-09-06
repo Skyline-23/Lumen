@@ -117,7 +117,7 @@ fn validate_avcc_header(
         | PlatformVideoProfile::HevcMain10
         | PlatformVideoProfile::HevcMain444
         | PlatformVideoProfile::HevcMain44410
-        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => {
+        | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 | PlatformVideoProfile::ShadowVcRegionalPredictor8 => {
             return Err(
                 "H.264 decoder configuration header does not match the selected video format"
                     .to_owned(),
@@ -170,7 +170,7 @@ impl HevcConfigurationHeader {
             PlatformVideoProfile::H264Main
             | PlatformVideoProfile::H264High
             | PlatformVideoProfile::H264High444Predictive
-            | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 => return false,
+            | PlatformVideoProfile::Av1Main | PlatformVideoProfile::ShadowVcSpatialBase16 | PlatformVideoProfile::ShadowVcRegionalPredictor8 => return false,
         };
         let chroma_format_idc = match format.chroma_subsampling {
             PlatformChromaSubsampling::Yuv420 => 1,

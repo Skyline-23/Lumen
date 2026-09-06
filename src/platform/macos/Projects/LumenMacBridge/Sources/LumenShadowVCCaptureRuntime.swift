@@ -8,21 +8,34 @@ import Synchronization
 @available(macOS 27, *)
 actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private let context: LumenEncodedCaptureRuntimeContext
-    private let modelDirectory: URL
+    private let modelDirectory: URL?
     private var stream: SCStream?
     private var output: LumenShadowVCStreamOutput?
     private var consumer: Task<Void, Never>?
-    private var encoder: ShadowVCEncoder?
+    private var encoder: Codec?
     private var starting = false
     private var stopping = false
     private var nextFrameID: UInt32 = 0
     private var bootstrapEpoch: UInt64?
     private var statistics = LumenEncodedCaptureSessionStatistics()
+    private var totalEncodeMilliseconds = 0.0
     private nonisolated let epoch = Atomic<UInt64>(1)
     private nonisolated let acknowledged = Atomic(false)
     private nonisolated let repair = Atomic(false)
 
-    init(context: LumenEncodedCaptureRuntimeContext, modelDirectory: URL) {
+    private enum Codec {
+        case spatial(ShadowVCEncoder)
+        case regional(ShadowVC4Encoder)
+        func encode(_ pixel: ShadowVCPixelBuffer, frameID: UInt32, forceKeyframe: Bool) async throws -> (bytes: Data, keyframe: Bool) {
+            switch self {
+            case .spatial(let encoder): return (try await encoder.encode(pixel, frameID: frameID), true)
+            case .regional(let encoder):
+                let frame = try await encoder.encode(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
+                return (frame.serialized(), frame.isKeyframe)
+            }
+        }
+    }
+    init(context: LumenEncodedCaptureRuntimeContext, modelDirectory: URL?) {
         self.context = context; self.modelDirectory = modelDirectory
     }
     func start() async throws {
@@ -35,7 +48,6 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
               let width = configuration.requestedWidth, let height = configuration.requestedHeight else {
             throw LumenExactCaptureError.invalidFormat("ShadowVC requires explicit native dimensions")
         }
-        let codecConfiguration = try ShadowVCConfiguration(width: width, height: height)
         // On macOS 27 CGDisplayPixelsWide/High may report logical HiDPI
         // dimensions. The selected mode owns the native backing contract.
         guard let mode = CGDisplayCopyDisplayMode(configuration.displayID),
@@ -43,7 +55,20 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             throw LumenExactCaptureError.sourceContractMismatch("ShadowVC requires matching native capture pixels")
         }
         let generation = epoch.load(ordering: .acquiring)
-        let encoder = try await ShadowVCEncoder(modelDirectory: modelDirectory, configuration: codecConfiguration)
+        let encoder: Codec
+        if configuration.videoProfile == .shadowVCRegionalPredictor8 {
+            // Bound input error to two 8-bit plane codes while reducing the
+            // cost of moving text. SCV2 reconstructs these input codes exactly.
+            encoder = .regional(try ShadowVC4Encoder(
+                configuration: .init(width: width, height: height),
+                sourceQuantizationStep: 4
+            ))
+        } else {
+            guard configuration.videoProfile == .shadowVCSpatialBase16, let modelDirectory else {
+                throw LumenExactCaptureError.invalidFormat("ShadowVC spatial profile requires its model bundle")
+            }
+            encoder = .spatial(try await ShadowVCEncoder(modelDirectory: modelDirectory, configuration: .init(width: width, height: height)))
+        }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard generation == epoch.load(ordering: .acquiring),
               let display = content.displays.first(where: { $0.displayID == configuration.displayID }) else {
@@ -54,7 +79,13 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         settings.pixelFormat = kCVPixelFormatType_32BGRA
         settings.colorSpaceName = CGColorSpace.sRGB
         settings.captureDynamicRange = .SDR
-        settings.minimumFrameInterval = CMTime(value: 1, timescale: Int32(configuration.targetFrameRate))
+        // A nominal 1/120 threshold can skip alternating 120 Hz samples when
+        // the compositor interval falls slightly below that rational value.
+        // Native cadence avoids that aliasing without exceeding the request
+        // when the selected display itself is at or below the requested rate.
+        settings.minimumFrameInterval = mode.refreshRate > 0
+            && mode.refreshRate <= Double(configuration.targetFrameRate)
+            ? .zero : CMTime(value: 1, timescale: Int32(configuration.targetFrameRate))
         settings.queueDepth = 3; settings.showsCursor = true
         let (frames, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let output = LumenShadowVCStreamOutput(continuation: continuation,
@@ -75,7 +106,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         guard generation == epoch.load(ordering: .acquiring) else { await stop(); throw CancellationError() }
         statistics.isRunning = true
         context.statisticsHandler(statistics)
-        context.callbacks.eventHandler?(.init(kind: .started, message: "ShadowVC Core AI capture started"))
+        context.callbacks.eventHandler?(.init(kind: .started, message: "ShadowVC capture started profile=\(configuration.videoProfile)"))
     }
     func stop() async {
         guard !stopping else { return }
@@ -118,24 +149,36 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             nextFrameID += 1
             let frameID = nextFrameID
             statistics.submittedFrameCount &+= 1
-            let bytes = try await encoder.encode(.init(pixel), frameID: frameID)
-            guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
-            let sample = try Self.sample(bytes: bytes, width: CVPixelBufferGetWidth(pixel), height: CVPixelBufferGetHeight(pixel), timestamp: timestamp)
             let bootstrap = bootstrapEpoch != generation
-            let isRepair = repair.exchange(false, ordering: .acquiringAndReleasing) && !bootstrap
+            let requestedRepair = repair.exchange(false, ordering: .acquiringAndReleasing)
+            let encoded = try await encoder.encode(.init(pixel), frameID: frameID, forceKeyframe: bootstrap || requestedRepair)
+            guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
+            let bytes = encoded.bytes
+            let regional = context.configuration.videoProfile == .shadowVCRegionalPredictor8
+            let sample = try Self.sample(bytes: bytes, width: CVPixelBufferGetWidth(pixel), height: CVPixelBufferGetHeight(pixel), timestamp: timestamp, regional: regional)
+            let isRepair = requestedRepair && !bootstrap
+            let requiresAcknowledgement = bootstrap || (regional && isRepair)
+            // Pause before publishing a predictive-profile repair. No later P
+            // frame may evict the independent repair from a bounded host queue.
+            if requiresAcknowledgement { acknowledged.store(false, ordering: .releasing) }
             bootstrapEpoch = generation
             let latency = Double(DispatchTime.now().uptimeNanoseconds-begin)/1e6
+            totalEncodeMilliseconds += latency
             context.callbacks.frameHandler(.init(sampleBuffer: sample, codec: .shadowVC,
                 sourceSequenceNumber: UInt64(frameID), sourceDisplayTime: displayTime,
-                outputCallbackLatencyMilliseconds: latency, isKeyFrame: true,
-                requiresBootstrapAcknowledgement: bootstrap, isRepairKeyFrame: isRepair,
+                outputCallbackLatencyMilliseconds: latency, isKeyFrame: encoded.keyframe,
+                requiresBootstrapAcknowledgement: requiresAcknowledgement, isRepairKeyFrame: isRepair,
                 isHDRSignaled: false, hdrValidationReport: .init(colorPrimaries: nil, transferFunction: nil,
                     yCbCrMatrix: nil, hasHDRDisplayMetadata: false, hasContentLightLevelInfo: false)))
             statistics.emittedFrameCount &+= 1
             statistics.encodedByteCount &+= UInt64(bytes.count)
             statistics.minOutputCallbackLatencyMilliseconds = min(statistics.minOutputCallbackLatencyMilliseconds ?? latency, latency)
             statistics.maxOutputCallbackLatencyMilliseconds = max(statistics.maxOutputCallbackLatencyMilliseconds ?? latency, latency)
-            if statistics.emittedFrameCount % 120 == 0 { updateSourceStatistics(); context.statisticsHandler(statistics) }
+            if statistics.emittedFrameCount == 1 || statistics.emittedFrameCount % 120 == 0 {
+                updateSourceStatistics(); context.statisticsHandler(statistics)
+                let message = "Lumen ShadowVC stage=capture-totals profile=\(context.configuration.videoProfile) source=\(statistics.sourceFrameCount) emitted=\(statistics.emittedFrameCount) admission-drops=\(statistics.pendingAdmissionDropCount) bytes=\(statistics.encodedByteCount) encode-total-ms=\(totalEncodeMilliseconds) last-frame-id=\(frameID) uptime-ns=\(DispatchTime.now().uptimeNanoseconds)\n"
+                try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
+            }
         } catch {
             guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
             statistics.processingFailureCount &+= 1; statistics.lastErrorDescription = String(describing: error)
@@ -151,7 +194,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         statistics.pendingAdmissionDropCount = output.droppedFrames.load(ordering: .relaxed)
         statistics.droppedFrameCount = statistics.pendingAdmissionDropCount
     }
-    private static func sample(bytes: Data, width: Int, height: Int, timestamp: CMTime) throws -> CMSampleBuffer {
+    private static func sample(bytes: Data, width: Int, height: Int, timestamp: CMTime, regional: Bool) throws -> CMSampleBuffer {
         var block: CMBlockBuffer?
         guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes.count,
             blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0, dataLength: bytes.count,
@@ -159,7 +202,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         let status = bytes.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes.count) }
         guard status == noErr else { throw ShadowVCError.unavailable }
         var format: CMVideoFormatDescription?
-        guard CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: 0x53435631,
+        guard CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: regional ? 0x53435632 : 0x53435631,
             width: Int32(width), height: Int32(height), extensions: nil, formatDescriptionOut: &format) == noErr, let format else { throw ShadowVCError.unavailable }
         var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: timestamp, decodeTimeStamp: .invalid)
         var size = bytes.count; var sample: CMSampleBuffer?

@@ -25,6 +25,7 @@ typedef enum LumenHostPlatformVideoProfile {
   LumenHostPlatformVideoProfileHEVCMain44410 = 6,
   LumenHostPlatformVideoProfileAV1Main = 7,
   LumenHostPlatformVideoProfileShadowVCSpatialBase16 = 8,
+  LumenHostPlatformVideoProfileShadowVCRegionalPredictor8 = 9,
 } LumenHostPlatformVideoProfile;
 
 typedef enum LumenHostPlatformChromaSubsampling {

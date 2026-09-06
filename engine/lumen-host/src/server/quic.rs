@@ -1558,6 +1558,7 @@ async fn accept_native_telemetry_stream(
     let mut logged_audio_feedback = false;
     let mut last_video_feedback_log = None;
     let mut last_video_feedback = None;
+    let mut video_totals = NativeVideoFeedbackTotals::default();
     loop {
         let frame =
             read_length_delimited_frame(&mut receive, NATIVE_CONTROL_MESSAGE_LIMIT, "telemetry")
@@ -1628,6 +1629,12 @@ async fn accept_native_telemetry_stream(
             .observe_native_media_feedback(&feedback, session_epoch);
         match disposition {
             Ok(disposition) => {
+                if is_video_feedback {
+                    video_totals.record(&feedback);
+                    if video_totals.windows == 1 || video_totals.windows % 4 == 0 {
+                        video_totals.log(session_epoch);
+                    }
+                }
                 let pipeline_pressure_triggered = matches!(
                     &disposition,
                     NativeMediaFeedbackDisposition::Applied(proposal)
@@ -1709,6 +1716,60 @@ async fn accept_native_telemetry_stream(
         "Lumen native QUIC stage=telemetry-peer-send-closed session-epoch={session_epoch} response-lane=held"
     );
     hold_native_auxiliary_response_until_session_end(send).await
+}
+
+#[derive(Default)]
+struct NativeVideoFeedbackTotals {
+    first_feedback_at: Option<Instant>,
+    windows: u64,
+    last_window: u64,
+    contiguous: bool,
+    milliseconds: u64,
+    submitted: u64,
+    decoded: u64,
+    presented: u64,
+    decoder_drops: u64,
+    presentation_drops: u64,
+    unrecoverable: u64,
+}
+
+impl NativeVideoFeedbackTotals {
+    fn record(&mut self, feedback: &MediaFeedback) {
+        self.first_feedback_at.get_or_insert_with(Instant::now);
+        self.contiguous = if self.windows == 0 { true } else {
+            self.contiguous && feedback.feedback_window_id == self.last_window + 1
+        };
+        self.windows += 1;
+        self.last_window = feedback.feedback_window_id;
+        self.milliseconds += u64::from(feedback.window_milliseconds);
+        self.submitted += u64::from(feedback.decoder_submissions);
+        self.decoded += u64::from(feedback.decoded_frames);
+        self.presented += u64::from(feedback.presented_frames);
+        self.decoder_drops += u64::from(feedback.decoder_drops);
+        self.presentation_drops += u64::from(feedback.presentation_drops);
+        self.unrecoverable += u64::from(feedback.unrecoverable_objects);
+    }
+
+    fn log(&self, session_epoch: u32) {
+        eprintln!("Lumen native QUIC stage=video-feedback-totals session-epoch={session_epoch} windows={} last-window={} contiguous={} window-ms={} submitted={} decoded={} presented={} decoder-drops={} presentation-drops={} unrecoverable={} elapsed-ms={}",
+            self.windows, self.last_window, self.contiguous, self.milliseconds,
+            self.submitted, self.decoded, self.presented, self.decoder_drops,
+            self.presentation_drops, self.unrecoverable,
+            self.first_feedback_at.map_or(0, |start| start.elapsed().as_millis()));
+    }
+}
+
+#[test]
+fn video_feedback_totals_include_every_window_and_detect_gaps() {
+    let mut totals = NativeVideoFeedbackTotals::default();
+    for (id, ms, presented) in [(1, 500, 40), (2, 250, 28), (3, 250, 29)] {
+        totals.record(&MediaFeedback { feedback_window_id: id, window_milliseconds: ms,
+            presented_frames: presented, ..MediaFeedback::default() });
+    }
+    assert_eq!((totals.windows, totals.milliseconds, totals.presented), (3, 1000, 97));
+    assert!(totals.contiguous);
+    totals.record(&MediaFeedback { feedback_window_id: 5, ..MediaFeedback::default() });
+    assert!(!totals.contiguous);
 }
 
 fn log_native_video_feedback(
@@ -2078,19 +2139,34 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             hardware_accelerated: Some(true),
         });
     }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    if shadow_vc_os_supported() {
+        capabilities.push(NativeVideoCapability {
+            format: Some(NativeVideoFormat { codec: NativeVideoCodec::ShadowVc as i32,
+                profile: NativeVideoProfile::ShadowVcRegionalPredictor8 as i32,
+                chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32, bit_depth: 10,
+                dynamic_range: NativeDynamicRange::Sdr as i32, color_range: NativeColorRange::Limited as i32 }),
+            max_width: 3840, max_height: 2160, max_refresh_millihz: 240_000,
+            hardware_accelerated: Some(false),
+        });
+    }
     capabilities
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-fn shadow_vc_model_is_provisioned() -> bool {
-    let supported_os = std::process::Command::new("/usr/bin/sw_vers").arg("-productVersion")
+fn shadow_vc_os_supported() -> bool {
+    std::process::Command::new("/usr/bin/sw_vers").arg("-productVersion")
         .output().ok().filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
-        .is_some_and(|major| major >= 27);
+        .is_some_and(|major| major >= 27)
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn shadow_vc_model_is_provisioned() -> bool {
     let model = std::env::current_exe().ok().and_then(|path|
         path.parent()?.parent().map(|contents| contents.join("Resources/ShadowVCModels/model.json")));
-    supported_os && model.is_some_and(|path| path.is_file())
+    shadow_vc_os_supported() && model.is_some_and(|path| path.is_file())
 }
 
 fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, String> {

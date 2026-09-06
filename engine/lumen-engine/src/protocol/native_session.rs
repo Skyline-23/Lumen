@@ -198,6 +198,7 @@ pub enum NativeVideoProfile {
     HevcMain44410 = 7,
     Av1Main = 8,
     ShadowVcSpatialBase16 = 9,
+    ShadowVcRegionalPredictor8 = 10,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -1258,7 +1259,7 @@ pub fn negotiate_native_session(
             max_width: client.width,
             max_height: client.height,
             max_refresh_millihz: client.refresh_millihz,
-            hardware_accelerated: Some(true),
+            hardware_accelerated: host_video_capability.hardware_accelerated,
         }),
         maximum_object_delay_us: maximum_object_delay_us(client.refresh_millihz, policy),
         media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES
@@ -1334,7 +1335,7 @@ fn exact_video_format(format: &NativeVideoFormat) -> Option<ExactVideoFormat> {
                 && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
                 && matches!(exact.bit_depth, 8 | 10)
         }
-        NativeVideoProfile::ShadowVcSpatialBase16 => {
+        NativeVideoProfile::ShadowVcSpatialBase16 | NativeVideoProfile::ShadowVcRegionalPredictor8 => {
             exact.codec == NativeVideoCodec::ShadowVc
                 && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
                 && exact.bit_depth == 10
@@ -1465,7 +1466,9 @@ fn find_exact_capability<'a>(
     requested_format: &NativeVideoFormat,
 ) -> Option<&'a NativeVideoCapability> {
     capabilities.iter().find(|capability| {
-        capability.hardware_accelerated == Some(true)
+        (capability.hardware_accelerated == Some(true)
+            || (capability.hardware_accelerated == Some(false)
+                && requested_format.profile == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32))
             && capability.format.as_ref() == Some(requested_format)
             && capability
                 .format

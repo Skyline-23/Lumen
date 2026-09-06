@@ -1859,7 +1859,7 @@ fn finish_video_datagram_delivery(
     sender: &mut VideoSenderState,
     frame_id: u32,
     status: &DatagramBatchStatus,
-    codec: crate::PlatformVideoCodec,
+    profile: crate::PlatformVideoProfile,
     bootstrap_pending: bool,
     bootstrap_reason: Option<NativeVideoBootstrapReason>,
     bootstrap_requires_encoder_resume: bool,
@@ -1869,7 +1869,7 @@ fn finish_video_datagram_delivery(
     }
     let request_repair = sender.finish_delta_delivery(
         frame_id,
-        *status != DatagramBatchStatus::Complete && codec != crate::PlatformVideoCodec::ShadowVc,
+        *status != DatagramBatchStatus::Complete && profile != crate::PlatformVideoProfile::ShadowVcSpatialBase16,
         bootstrap_pending,
         bootstrap_reason,
         bootstrap_requires_encoder_resume,
@@ -2111,6 +2111,7 @@ async fn poll_and_send_video(
         // awaiting the bootstrap ACK cannot invalidate the next frame, so it
         // must not schedule another bootstrap/repair cycle after that ACK.
         if delivery.video_format.codec == crate::PlatformVideoCodec::ShadowVc
+            && delivery.video_format.profile == crate::PlatformVideoProfile::ShadowVcSpatialBase16
             && !normalized.frame.repair_keyframe
         {
             sender.pending_frame = None;
@@ -2352,6 +2353,13 @@ async fn poll_and_send_video(
     .await;
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
     let object_age_us = duration_to_microseconds(pending_since.elapsed());
+    if frame_id <= 3 || frame_id.checked_rem(120) == Some(0) {
+        let stats = connection.stats();
+        eprintln!("Lumen native media stage=quic-path session-epoch={} frame-id={frame_id} rtt-us={} cwnd={} sent-packets={} lost-packets={} congestion-events={} udp-tx-bytes={} queue-free={} uptime-object-us={object_age_us}",
+            delivery.session_epoch, stats.path.rtt.as_micros(), stats.path.cwnd,
+            stats.path.sent_packets, stats.path.lost_packets, stats.path.congestion_events,
+            stats.udp_tx.bytes, connection.datagram_send_buffer_space());
+    }
     if frame_id <= 3
         || frame_id.checked_rem(120) == Some(0)
         || report.mode == DatagramBatchMode::DeadlineWait
@@ -2419,7 +2427,7 @@ async fn poll_and_send_video(
         sender,
         frame_id,
         &report.status,
-        delivery.video_format.codec,
+        delivery.video_format.profile,
         delivery.bootstrap_pending,
         delivery.bootstrap_reason,
         delivery.bootstrap_requires_encoder_resume,
@@ -3276,7 +3284,7 @@ mod tests {
         let mut sender = VideoSenderState::default();
         let initial_frame_id = sender.frame_id;
         let completion =
-            finish_video_datagram_delivery(&mut sender, 41, &report.status, crate::PlatformVideoCodec::Hevc, false, None, false)
+            finish_video_datagram_delivery(&mut sender, 41, &report.status, crate::PlatformVideoProfile::HevcMain, false, None, false)
                 .expect("terminal transport classification");
         assert_eq!(
             completion,
@@ -3405,13 +3413,17 @@ mod tests {
         let status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::WireRate);
         for frame_id in 1..=3 {
             assert_eq!(finish_video_datagram_delivery(&mut sender, frame_id, &status,
-                crate::PlatformVideoCodec::ShadowVc, false, None, false).unwrap(),
+                crate::PlatformVideoProfile::ShadowVcSpatialBase16, false, None, false).unwrap(),
                 VideoDatagramCompletion::Continue { request_repair: false });
             assert!(!sender.repair_required);
             assert_eq!(sender.frame_id, frame_id + 1);
         }
         assert_eq!(finish_video_datagram_delivery(&mut sender, 4, &status,
-            crate::PlatformVideoCodec::Hevc, false, None, false).unwrap(),
+            crate::PlatformVideoProfile::HevcMain, false, None, false).unwrap(),
+            VideoDatagramCompletion::Continue { request_repair: true });
+        let mut regional = VideoSenderState::default();
+        assert_eq!(finish_video_datagram_delivery(&mut regional, 1, &status,
+            crate::PlatformVideoProfile::ShadowVcRegionalPredictor8, false, None, false).unwrap(),
             VideoDatagramCompletion::Continue { request_repair: true });
     }
 

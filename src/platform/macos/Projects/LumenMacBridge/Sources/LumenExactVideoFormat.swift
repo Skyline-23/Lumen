@@ -12,6 +12,7 @@ public enum LumenCaptureVideoProfile: Int, CaseIterable, Codable, Sendable {
     case hevcMain444 = 5
     case hevcMain44410 = 6
     case shadowVCSpatialBase16 = 8
+    case shadowVCRegionalPredictor8 = 9
 }
 
 public enum LumenCaptureChromaSubsampling: Int, CaseIterable, Codable, Sendable {
@@ -81,8 +82,8 @@ enum LumenVideoToolboxEncodingPlanResolver {
 
         let profile: CFString
         switch configuration.videoProfile {
-        case .shadowVCSpatialBase16:
-            throw LumenExactCaptureError.invalidFormat("ShadowVC requires Core AI")
+        case .shadowVCSpatialBase16, .shadowVCRegionalPredictor8:
+            throw LumenExactCaptureError.invalidFormat("ShadowVC requires its negotiated codec runtime")
         case .h264Main:
             profile = kVTProfileLevel_H264_Main_AutoLevel
         case .h264High:
@@ -224,13 +225,13 @@ extension LumenMacCaptureConfiguration {
         case .h264High444Predictive: return .h264High444Predictive
         case .hevcMain444: return .hevcMain444
         case .hevcMain44410: return .hevcMain44410
-        case .h264Main, .h264High, .hevcMain, .hevcMain10, .shadowVCSpatialBase16: return nil
+        case .h264Main, .h264High, .hevcMain, .hevcMain10, .shadowVCSpatialBase16, .shadowVCRegionalPredictor8: return nil
         }
     }
 
     var expectedCodecConfiguration: LumenVideoToolboxParsedConfiguration {
         switch videoProfile {
-        case .shadowVCSpatialBase16: return .shadowVC
+        case .shadowVCSpatialBase16, .shadowVCRegionalPredictor8: return .shadowVC
         case .h264Main: return .h264(profileIdc: 77)
         case .h264High: return .h264(profileIdc: 100)
         case .h264High444Predictive: return .h264(profileIdc: 244)
@@ -244,7 +245,7 @@ extension LumenMacCaptureConfiguration {
     func validateExactVideoFormat() throws {
         let matches: Bool
         switch videoProfile {
-        case .shadowVCSpatialBase16:
+        case .shadowVCSpatialBase16, .shadowVCRegionalPredictor8:
             matches = codec == .shadowVC && chromaSubsampling == .yuv420 && bitDepth == 10 && dynamicRange == .sdr && colorRange == .limited
         case .h264Main, .h264High:
             matches = codec == .h264 && chromaSubsampling == .yuv420 && bitDepth == 8

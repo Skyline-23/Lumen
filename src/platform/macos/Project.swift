@@ -92,7 +92,7 @@ let project = Project(
         developmentRegion: "en",
         disableSynthesizedResourceAccessors: true
     ),
-    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("e2f2d04409f21f98c068c1a7a2f6005831d57474"))],
+    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("5ff412a213072c91023a1d9232013e054891e12b"))],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -364,7 +364,8 @@ let project = Project(
             dependencies: [
                 .target(name: "LumenAppArchitecture"),
                 .target(name: "LumenMacBridge"),
-                .target(name: "LumenMacCaptureAdapter")
+                .target(name: "LumenMacCaptureAdapter"),
+                .package(product: "ShadowVCRuntime")
             ],
             settings: .settings(
                 base: [
