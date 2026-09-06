@@ -36,8 +36,10 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             throw LumenExactCaptureError.invalidFormat("ShadowVC requires explicit native dimensions")
         }
         let codecConfiguration = try ShadowVCConfiguration(width: width, height: height)
-        guard CGDisplayPixelsWide(configuration.displayID) == width,
-              CGDisplayPixelsHigh(configuration.displayID) == height else {
+        // On macOS 27 CGDisplayPixelsWide/High may report logical HiDPI
+        // dimensions. The selected mode owns the native backing contract.
+        guard let mode = CGDisplayCopyDisplayMode(configuration.displayID),
+              mode.pixelWidth == width, mode.pixelHeight == height else {
             throw LumenExactCaptureError.sourceContractMismatch("ShadowVC requires matching native capture pixels")
         }
         let generation = epoch.load(ordering: .acquiring)

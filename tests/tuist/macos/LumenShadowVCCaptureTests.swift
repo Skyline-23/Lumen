@@ -56,8 +56,8 @@ final class LumenShadowVCCaptureTests: XCTestCase {
         config.name = "ShadowVC independent capture validation"
         config.backingWidth = 3840; config.backingHeight = 2160
         config.maximumBackingWidth = 3840; config.maximumBackingHeight = 2160
-        config.logicalWidth = 3840; config.logicalHeight = 2160
-        config.highDensity = false; config.refreshRate = 120; config.hdrEnabled = false
+        config.logicalWidth = 1920; config.logicalHeight = 1080
+        config.highDensity = true; config.refreshRate = 120; config.hdrEnabled = false
         let display = try LumenMacVirtualDisplay(configuration: config)
         defer { display.destroy() }
         var screen: NSScreen?
@@ -67,8 +67,11 @@ final class LumenShadowVCCaptureTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         let target = try XCTUnwrap(screen)
-        XCTAssertEqual(CGDisplayPixelsWide(display.displayID),3840)
-        XCTAssertEqual(CGDisplayPixelsHigh(display.displayID),2160)
+        let mode = try XCTUnwrap(CGDisplayCopyDisplayMode(display.displayID))
+        XCTAssertEqual(mode.width,1920)
+        XCTAssertEqual(mode.height,1080)
+        XCTAssertEqual(mode.pixelWidth,3840)
+        XCTAssertEqual(mode.pixelHeight,2160)
         let window = NSWindow(contentRect: target.frame,styleMask: .borderless,backing: .buffered,defer: false)
         window.isReleasedWhenClosed = false; window.level = .floating
         window.ignoresMouseEvents = true
