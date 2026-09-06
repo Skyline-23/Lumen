@@ -96,7 +96,9 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         // Mutable codec/lifecycle state remains on this actor.
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: nil)
         self.encoder = encoder; self.output = output; self.stream = stream
-        consumer = Task { [weak self] in
+        // Capture conversion and the native plane tasks serve an interactive
+        // stream; inherit this priority through the encoder's task group.
+        consumer = Task(priority: .userInitiated) { [weak self] in
             for await sample in frames {
                 guard !Task.isCancelled else { break }
                 await self?.consume(sample)
