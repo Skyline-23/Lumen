@@ -62,7 +62,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             // cost of moving text. SCV2 reconstructs these input codes exactly.
             encoder = .regional(try ShadowVC4Encoder(
                 configuration: .init(width: width, height: height),
-                sourceQuantizationStep: 4
+                sourceQuantizationStep: 2
             ))
         } else {
             guard configuration.videoProfile == .shadowVCSpatialBase16, let modelDirectory else {
