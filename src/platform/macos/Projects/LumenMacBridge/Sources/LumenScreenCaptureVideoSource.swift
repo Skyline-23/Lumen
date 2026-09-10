@@ -803,7 +803,7 @@ extension LumenScreenCaptureVideoRuntime {
 
         recordSourceTiming(callbackEntryMachTime)
         observeUnchangedContentCadence(
-            signal: unchangedContentCadenceSignal(for: sampleBuffer)
+            signal: LumenScreenCaptureContentMetadata(sampleBuffer: sampleBuffer).signal
         )
 
         guard let imageBuffer = sampleBuffer.imageBuffer else {
@@ -999,54 +999,6 @@ extension LumenScreenCaptureVideoRuntime {
             return
         }
         scheduleAdaptiveFrameCadenceTargetUpdate()
-    }
-
-    func unchangedContentCadenceSignal(
-        for sampleBuffer: CMSampleBuffer
-    ) -> LumenUnchangedContentCadenceController.Signal {
-        guard let attachments = screenFrameAttachments(sampleBuffer),
-              let value = attachments[.status] as? NSNumber,
-              let status = SCFrameStatus(rawValue: value.intValue) else {
-            return .unknown
-        }
-        let dirtyRectCount: Int?
-        if status == .complete {
-            if let dirtyRects = attachments[.dirtyRects] as? [NSValue] {
-                dirtyRectCount = dirtyRects.count
-            } else {
-                dirtyRectCount = nil
-            }
-        } else {
-            dirtyRectCount = nil
-        }
-        return Self.unchangedContentCadenceSignal(
-            status: status,
-            dirtyRectCount: dirtyRectCount
-        )
-    }
-
-    /// Pure metadata classification kept separate from CMSampleBuffer access
-    /// so malformed/missing ScreenCaptureKit attachments can be tested without
-    /// constructing a pixel buffer. Unknown states always fail open.
-    static func unchangedContentCadenceSignal(
-        status: SCFrameStatus?,
-        dirtyRectCount: Int?
-    ) -> LumenUnchangedContentCadenceController.Signal {
-        guard let status else {
-            return .unknown
-        }
-        switch status {
-        case .idle:
-            return .idle
-        case .complete:
-            guard let dirtyRectCount,
-                  dirtyRectCount >= 0 else {
-                return .unknown
-            }
-            return dirtyRectCount == 0 ? .unchanged : .changed
-        default:
-            return .unknown
-        }
     }
 
     func screenFrameAttachments(

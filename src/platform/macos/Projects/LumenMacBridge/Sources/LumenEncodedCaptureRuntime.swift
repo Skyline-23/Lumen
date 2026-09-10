@@ -215,7 +215,13 @@ struct LumenProductionCaptureRuntimeFactory:
             guard context.configuration.videoProfile != .shadowVCSpatialBase16 || shadowVCModelDirectory != nil else {
                 throw LumenExactCaptureError.invalidFormat("ShadowVC spatial profile requires its negotiated model")
             }
-            return LumenShadowVCCaptureRuntime(context: context, modelDirectory: shadowVCModelDirectory)
+            guard let cadence = LumenUnchangedContentCadenceController(
+                requestedFrameRate: context.configuration.targetFrameRate
+            ) else {
+                throw LumenExactCaptureError.invalidFormat("invalid ShadowVC capture cadence")
+            }
+            return LumenShadowVCCaptureRuntime(context: context,
+                modelDirectory: shadowVCModelDirectory, contentCadence: cadence)
         }
         return try LumenScreenCaptureVideoRuntime(
             configuration: context.configuration,

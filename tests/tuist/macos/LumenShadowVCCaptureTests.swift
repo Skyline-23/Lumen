@@ -100,7 +100,8 @@ final class LumenShadowVCCaptureTests: XCTestCase {
             codec: .shadowVC,videoProfile: .shadowVCSpatialBase16,bitDepth: 10,dynamicRange: .sdr,
             targetFrameRate: 120,requestedWidth: 3840,requestedHeight: 2160),
             callbacks: .init(frameHandler: { frame in Task { await probe.record(frame) } },eventHandler: nil),
-            statisticsHandler: { _ in },terminationHandler: { error in Task { await probe.fail(error) } }),modelDirectory: model)
+            statisticsHandler: { _ in },terminationHandler: { error in Task { await probe.fail(error) } }),modelDirectory: model,
+            contentCadence: try XCTUnwrap(LumenUnchangedContentCadenceController(requestedFrameRate: 120)))
         do {
             try await runtime.start()
             for tick in 0..<1200 {

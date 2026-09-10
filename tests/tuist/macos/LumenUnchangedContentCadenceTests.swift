@@ -23,7 +23,7 @@ final class LumenUnchangedContentCadenceTests: XCTestCase {
                 signal: .idle,
                 pipelineStable: true
             ),
-            .init(targetFrameRate: 2, changed: true, lowRateActive: true)
+            .init(targetFrameRate: 1, changed: true, lowRateActive: true)
         )
         XCTAssertEqual(
             controller.observe(
@@ -70,7 +70,7 @@ final class LumenUnchangedContentCadenceTests: XCTestCase {
         ]
         for (status, dirtyRectCount, expected) in cases {
             XCTAssertEqual(
-                LumenScreenCaptureVideoRuntime.unchangedContentCadenceSignal(
+                LumenScreenCaptureContentMetadata.signal(
                     status: status,
                     dirtyRectCount: dirtyRectCount
                 ),

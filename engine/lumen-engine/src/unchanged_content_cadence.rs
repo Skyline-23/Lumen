@@ -3,7 +3,7 @@
 //! This controller deliberately consumes content metadata rather than pixels.
 //! ScreenCaptureKit already tells the host whether a sample is idle and, when
 //! available, which damage rectangles were produced.  A static display can
-//! therefore enter a bounded two-frame-per-second refresh without hashing a
+//! therefore enter a bounded one-frame-per-second refresh without hashing a
 //! 4K surface on the capture callback.  The negotiated rate remains the
 //! ceiling; activity or an untrusted metadata sample reopens the ceiling and
 //! starts a fresh confirmation epoch.
@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use crate::LumenEngineStatus;
 
-const LOW_FRAME_RATE: u32 = 2;
+const LOW_FRAME_RATE: u32 = 1;
 const IDLE_CONFIRMATION_SECONDS: f64 = 1.0;
 
 /// Validated content metadata classification used inside the controller.
@@ -46,7 +46,7 @@ impl ContentCadenceSignal {
 /// Configuration for one unchanged-content cadence controller.
 ///
 /// `requested_frame_rate` is the negotiated ceiling.  The low-rate target is
-/// intentionally fixed at two frames per second so all host adapters share
+/// intentionally fixed at one frame per second so all host adapters share
 /// the same bounded idle behavior.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -378,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_content_requires_one_second_confirmation_before_two_fps() {
+    fn idle_content_requires_one_second_confirmation_before_one_fps() {
         let mut state = state();
         assert_eq!(
             state
@@ -396,14 +396,14 @@ mod tests {
         let confirmed = state
             .observe(observation(2.0, ContentCadenceSignal::Idle))
             .unwrap();
-        assert_eq!(confirmed.target_frame_rate, 2);
+        assert_eq!(confirmed.target_frame_rate, 1);
         assert!(confirmed.changed);
         assert!(confirmed.low_rate_active);
 
         let held = state
             .observe(observation(10.0, ContentCadenceSignal::Idle))
             .unwrap();
-        assert_eq!(held.target_frame_rate, 2);
+        assert_eq!(held.target_frame_rate, 1);
         assert!(!held.changed);
         assert!(held.low_rate_active);
 
@@ -430,7 +430,7 @@ mod tests {
         state
             .observe(observation(1.0, ContentCadenceSignal::Idle))
             .unwrap();
-        assert_eq!(state.target, 2);
+        assert_eq!(state.target, 1);
 
         let changed = state
             .observe(observation(1.01, ContentCadenceSignal::Changed))
@@ -447,7 +447,7 @@ mod tests {
         state
             .observe(observation(2.99, ContentCadenceSignal::Unchanged))
             .unwrap();
-        assert_eq!(state.target, 2);
+        assert_eq!(state.target, 1);
 
         let wake = state.wake(3.0).unwrap();
         assert_eq!(wake.target_frame_rate, 120);
@@ -470,7 +470,7 @@ mod tests {
         state
             .observe(observation(1.0, ContentCadenceSignal::Idle))
             .unwrap();
-        assert_eq!(state.target, 2);
+        assert_eq!(state.target, 1);
 
         let mut unstable = observation(1.01, ContentCadenceSignal::Idle);
         unstable.pipeline_stable = false;
@@ -490,7 +490,7 @@ mod tests {
         state
             .observe(observation(3.0, ContentCadenceSignal::Idle))
             .unwrap();
-        assert_eq!(state.target, 2);
+        assert_eq!(state.target, 1);
 
         let mut invalid = observation(3.01, ContentCadenceSignal::Idle);
         invalid.signal = 99;

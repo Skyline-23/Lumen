@@ -9,6 +9,8 @@ import Synchronization
 actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private let context: LumenEncodedCaptureRuntimeContext
     private let modelDirectory: URL?
+    private let contentCadence: LumenUnchangedContentCadenceController
+    private var contentPacer: LumenAdaptiveVideoFramePacer
     private var stream: SCStream?
     private var output: LumenShadowVCStreamOutput?
     private var consumer: Task<Void, Never>?
@@ -19,10 +21,13 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private var bootstrapEpoch: UInt64?
     private var statistics = LumenEncodedCaptureSessionStatistics()
     private var totalEncodeMilliseconds = 0.0
+    private var lastStatisticsUptimeNanoseconds: UInt64 = 0
     private var downstreamAdmissionDropCount: UInt64 = 0
     private nonisolated let epoch = Atomic<UInt64>(1)
     private nonisolated let acknowledged = Atomic(false)
     private nonisolated let repair = Atomic(false)
+    private nonisolated let cadenceWakeEpoch = Atomic<UInt64>(0)
+    private nonisolated let cadenceActive = Atomic(false)
 
     private enum Codec {
         case spatial(ShadowVCEncoder)
@@ -40,13 +45,17 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             }
         }
     }
-    init(context: LumenEncodedCaptureRuntimeContext, modelDirectory: URL?) {
+    init(context: LumenEncodedCaptureRuntimeContext, modelDirectory: URL?,
+         contentCadence: LumenUnchangedContentCadenceController) {
         self.context = context; self.modelDirectory = modelDirectory
+        self.contentCadence = contentCadence
+        contentPacer = LumenAdaptiveVideoFramePacer(frameRateCeiling: context.configuration.targetFrameRate)
     }
     func start() async throws {
         guard stream == nil, !starting, !stopping else { throw LumenExactCaptureError.invalidFormat("capture already started") }
         starting = true
         defer { starting = false }
+        cadenceWakeEpoch.store(0, ordering: .releasing)
         let configuration = context.configuration
         try configuration.validateExactVideoFormat()
         guard configuration.preprocessStrategy == .none,
@@ -99,7 +108,16 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         settings.queueDepth = 3; settings.showsCursor = true
         let (frames, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let output = LumenShadowVCStreamOutput(continuation: continuation,
-            currentEpoch: { [weak self] in self?.epoch.load(ordering: .acquiring) ?? 0 }, failed: context.terminationHandler)
+            contentCadence: contentCadence,
+            currentEpoch: { [weak self] in self?.epoch.load(ordering: .acquiring) ?? 0 },
+            pipelineStable: { [weak self] in
+                guard let self else { return false }
+                return self.acknowledged.load(ordering: .acquiring)
+                    && !self.repair.load(ordering: .acquiring)
+            },
+            takeWakeRequest: { [weak self] generation in
+                self?.cadenceWakeEpoch.exchange(0, ordering: .acquiringAndReleasing) == generation
+            }, failed: context.terminationHandler)
         let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: settings, delegate: output)
         // The system callback queue only yields into a bounded AsyncStream.
         // Mutable codec/lifecycle state remains on this actor.
@@ -116,6 +134,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         do { try await stream.startCapture() }
         catch { await stop(); throw error }
         guard generation == epoch.load(ordering: .acquiring) else { await stop(); throw CancellationError() }
+        cadenceActive.store(true, ordering: .releasing)
         statistics.isRunning = true
         context.statisticsHandler(statistics)
         let identity = configuration.videoProfile == .shadowVCLuma16
@@ -126,8 +145,10 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         guard !stopping else { return }
         stopping = true
         defer { stopping = false }
+        cadenceActive.store(false, ordering: .releasing)
         _ = epoch.wrappingAdd(1, ordering: .acquiringAndReleasing)
         acknowledged.store(false, ordering: .releasing)
+        cadenceWakeEpoch.store(0, ordering: .releasing)
         let stream = self.stream; self.stream = nil
         output?.finish(); consumer?.cancel()
         let consumer = self.consumer; self.consumer = nil
@@ -143,6 +164,14 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         acknowledged.store(false, ordering: .releasing)
     }
     nonisolated func requestImmediateKeyFrame() { repair.store(true, ordering: .releasing) }
+    nonisolated func wakeUnchangedContentCadence(sessionEpoch: UInt32) -> Bool {
+        guard sessionEpoch == context.configuration.sessionEpoch,
+              cadenceActive.load(ordering: .acquiring) else { return false }
+        // The existing SCK callback applies the coalesced wake before observing
+        // the next sample. Input never waits for inference or creates a task.
+        cadenceWakeEpoch.store(epoch.load(ordering: .acquiring), ordering: .releasing)
+        return true
+    }
     func requestPeriodicKeyFrame() async -> Bool { requestImmediateKeyFrame(); return true }
     func resumeVideoEncodingAfterCodecAck() async -> Bool {
         guard stream != nil else { return false }
@@ -154,6 +183,21 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         let generation = epoch.load(ordering: .acquiring)
         guard captured.epoch == generation else { return }
         if bootstrapEpoch == generation && !acknowledged.load(ordering: .acquiring) { return }
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(handle.value)
+        guard timestamp.isValid, timestamp.isNumeric else { return }
+        let target = contentCadence.targetFrameRate ?? context.configuration.targetFrameRate
+        if contentPacer.targetFrameRate != target {
+            _ = contentPacer.configure(targetFrameRate: target)
+        }
+        statistics.adaptiveTargetFrameRate = target
+        // Only unchanged content is throttled. A wake/damage callback restores
+        // native cadence before admission; bootstrap and repair also bypass it.
+        if target < context.configuration.targetFrameRate,
+           bootstrapEpoch == generation, !repair.load(ordering: .acquiring),
+           !contentPacer.admit(sourcePresentationTime: timestamp, forceKeyFrame: false).isAdmitted {
+            statistics.intentionalFrameCadenceDropCount &+= 1
+            return
+        }
         // Discard raw samples under downstream pressure, before encoding can
         // advance the predictive reference. Dropping an encoded P frame would
         // invalidate every following frame and force an expensive repair.
@@ -161,8 +205,6 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             downstreamAdmissionDropCount &+= 1
             return
         }
-        let timestamp = CMSampleBufferGetPresentationTimeStamp(handle.value)
-        guard timestamp.isValid, timestamp.isNumeric else { return }
         let begin = DispatchTime.now().uptimeNanoseconds
         let displayTime = LumenMachTime.ticks(for: timestamp) ?? mach_absolute_time()
         do {
@@ -208,9 +250,11 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             statistics.encodedByteCount &+= UInt64(bytes.count)
             statistics.minOutputCallbackLatencyMilliseconds = min(statistics.minOutputCallbackLatencyMilliseconds ?? latency, latency)
             statistics.maxOutputCallbackLatencyMilliseconds = max(statistics.maxOutputCallbackLatencyMilliseconds ?? latency, latency)
-            if statistics.emittedFrameCount == 1 || statistics.emittedFrameCount % 120 == 0 {
+            if statistics.emittedFrameCount == 1 || statistics.emittedFrameCount % 120 == 0
+                || begin - lastStatisticsUptimeNanoseconds >= 1_000_000_000 {
+                lastStatisticsUptimeNanoseconds = begin
                 updateSourceStatistics(); context.statisticsHandler(statistics)
-                let message = "Lumen ShadowVC stage=capture-totals profile=\(context.configuration.videoProfile) source=\(statistics.sourceFrameCount) emitted=\(statistics.emittedFrameCount) admission-drops=\(statistics.pendingAdmissionDropCount) bytes=\(statistics.encodedByteCount) encode-total-ms=\(totalEncodeMilliseconds) last-frame-id=\(frameID) uptime-ns=\(DispatchTime.now().uptimeNanoseconds)\n"
+                let message = "Lumen ShadowVC stage=capture-totals profile=\(context.configuration.videoProfile) source=\(statistics.sourceFrameCount) emitted=\(statistics.emittedFrameCount) admission-drops=\(statistics.pendingAdmissionDropCount) bytes=\(statistics.encodedByteCount) encode-total-ms=\(totalEncodeMilliseconds) last-frame-id=\(frameID) uptime-ns=\(DispatchTime.now().uptimeNanoseconds) cadence-target=\(target) cadence-drops=\(statistics.intentionalFrameCadenceDropCount) idle-callbacks=\(output?.idleFrames.load(ordering: .relaxed) ?? 0)\n"
                 try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
             }
         } catch {
@@ -248,30 +292,64 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     }
 }
 
-private struct LumenShadowVCCapturedFrame: Sendable {
+struct LumenShadowVCCapturedFrame: Sendable {
     let sample: LumenSampleBufferHandle
     let epoch: UInt64
 }
 
-private final class LumenShadowVCStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+// SCK serializes this output's callbacks. The controller is thread-safe for the
+// actor's target reads; all other cross-boundary state uses the existing atomics.
+final class LumenShadowVCStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let continuation: AsyncStream<LumenShadowVCCapturedFrame>.Continuation
+    let contentCadence: LumenUnchangedContentCadenceController
     let currentEpoch: @Sendable () -> UInt64
+    let pipelineStable: @Sendable () -> Bool
+    let takeWakeRequest: @Sendable (UInt64) -> Bool
     let completeFrames = Atomic<UInt64>(0)
+    let idleFrames = Atomic<UInt64>(0)
     let droppedFrames = Atomic<UInt64>(0)
     let failed: @Sendable (any Error) -> Void
     init(continuation: AsyncStream<LumenShadowVCCapturedFrame>.Continuation,
-         currentEpoch: @escaping @Sendable () -> UInt64, failed: @escaping @Sendable (any Error) -> Void) {
+         contentCadence: LumenUnchangedContentCadenceController,
+         currentEpoch: @escaping @Sendable () -> UInt64,
+         pipelineStable: @escaping @Sendable () -> Bool,
+         takeWakeRequest: @escaping @Sendable (UInt64) -> Bool,
+         failed: @escaping @Sendable (any Error) -> Void) {
         self.continuation = continuation; self.currentEpoch = currentEpoch; self.failed = failed
+        self.contentCadence = contentCadence; self.pipelineStable = pipelineStable
+        self.takeWakeRequest = takeWakeRequest
     }
     func finish() { continuation.finish() }
     func stream(_ stream: SCStream, didStopWithError error: any Error) { failed(error); finish() }
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, CMSampleBufferIsValid(sampleBuffer), sampleBuffer.imageBuffer != nil,
-              let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-              let status = attachments.first?[.status] as? Int, status == SCFrameStatus.complete.rawValue else { return }
+        guard type == .screen else { return }
+        process(sampleBuffer, monotonicTimeSeconds: ProcessInfo.processInfo.systemUptime)
+    }
+    func process(_ sampleBuffer: CMSampleBuffer, monotonicTimeSeconds: Double) {
+        guard CMSampleBufferIsValid(sampleBuffer) else { return }
+        let generation = currentEpoch()
+        let metadata = LumenScreenCaptureContentMetadata(sampleBuffer: sampleBuffer)
+        let woke = takeWakeRequest(generation)
+        if woke, let decision = contentCadence.wake(monotonicTimeSeconds: monotonicTimeSeconds) {
+            reportCadence(decision, reason: "input", monotonicTimeSeconds: monotonicTimeSeconds)
+        }
+        if let decision = contentCadence.observe(monotonicTimeSeconds: monotonicTimeSeconds,
+            signal: metadata.signal, pipelineStable: pipelineStable()) {
+            reportCadence(decision, reason: String(describing: metadata.signal), monotonicTimeSeconds: monotonicTimeSeconds)
+        }
+        // Idle metadata must not evict the last complete image in the newest-
+        // source slot. Observe it here and only hand real images to the actor.
+        if metadata.status == .idle { _ = idleFrames.wrappingAdd(1, ordering: .relaxed) }
+        guard metadata.status == .complete, sampleBuffer.imageBuffer != nil else { return }
         _ = completeFrames.wrappingAdd(1, ordering: .relaxed)
-        if case .dropped = continuation.yield(.init(sample: LumenSampleBufferHandle(retaining: sampleBuffer), epoch: currentEpoch())) {
+        if case .dropped = continuation.yield(.init(sample: LumenSampleBufferHandle(retaining: sampleBuffer), epoch: generation)) {
             _ = droppedFrames.wrappingAdd(1, ordering: .relaxed)
         }
+    }
+    private func reportCadence(_ decision: LumenUnchangedContentCadenceController.Decision,
+                               reason: String, monotonicTimeSeconds: Double) {
+        guard decision.changed else { return }
+        let message = "Lumen ShadowVC stage=content-cadence target-fps=\(decision.targetFrameRate) low-rate=\(decision.lowRateActive) reason=\(reason) uptime-seconds=\(monotonicTimeSeconds)\n"
+        try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
     }
 }
