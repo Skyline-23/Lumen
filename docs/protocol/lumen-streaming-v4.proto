@@ -193,6 +193,9 @@ message ClientSessionHello {
   AudioChannelMode requested_audio_channel_mode = 35;
   uint64 streaming_profile_revision = 36;
   VideoFormat requested_video_format = 37;
+  // Bit 6: FC3 long-term reference recovery. Required for profile LUMA16.
+  // Retain at most the two most recent decoded reliable bootstrap source
+  // states per configuration; ordinary deltas still require their latest parent.
   uint64 media_capabilities = 38;
 }
 
@@ -300,6 +303,12 @@ message VideoBootstrap {
   uint32 capture_timestamp_us = 6;
   VideoBootstrapReason reason = 7;
   bytes access_unit = 8;
+  // Zero for an independent bootstrap. Nonzero only for a negotiated FC3
+  // REPAIR, matching SCV3.referenceID and a previously DECODED bootstrap's
+  // codec source frame ID in this configuration (not the transport frame_id).
+  // The new generation bypasses missing datagram objects only after successful
+  // reference decode. DECODED acknowledges retention of the new source state.
+  uint32 codec_reference_frame_id = 9;
 }
 
 enum VideoBootstrapResultCode {
