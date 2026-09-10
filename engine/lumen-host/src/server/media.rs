@@ -633,7 +633,12 @@ where
     };
     for (index, (datagram, send_at)) in datagrams.into_iter().zip(schedule).enumerate() {
         let send_started = Instant::now();
-        tokio::time::sleep_until(send_at.into()).await;
+        // Millisecond timer rounding can suspend even an already-due send.
+        // With earned wire credit that delays the first packet and keeps the
+        // prepared FC3 encoder waiting despite free transport capacity.
+        if send_at > Instant::now() {
+            tokio::time::sleep_until(send_at.into()).await;
+        }
         if index == 0 && Instant::now() > deadline {
             report.status = DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send);
             break;
@@ -2736,6 +2741,39 @@ mod tests {
             self.0.lock().unwrap().push((epoch, frame, accepted));
             Ok(())
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ready_wire_credit_commits_the_encoder_without_a_timer_yield() {
+        let gate = tokio::sync::Mutex::new(());
+        let mut state = VideoWireRatePacer::default();
+        state.prepare(9, 0, 672_000).unwrap();
+        // A normal inter-frame interval earns enough wire credit for the next
+        // native FC3 object. Every send is already due and capacity is free.
+        let previous = Instant::now() - Duration::from_millis(8);
+        state.reserve(&[1_200], 1_200, previous, previous + Duration::from_millis(1)).unwrap();
+        let pacer = Arc::new(tokio::sync::Mutex::new(state));
+        let committed = Cell::new(false);
+        let send = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_170]; 133], 4 * 1024 * 1024, 2_400,
+            Instant::now() + Duration::from_millis(17), &gate, &pacer,
+            9, 0, 672_000, 1_200,
+            |_, _| async { Ok(Duration::ZERO) },
+            || 4 * 1024 * 1024,
+            |_, _, _| async { DatagramSendOutcome::Sent },
+            || { committed.set(true); Ok(()) },
+        );
+        tokio::pin!(send);
+        let first_poll = std::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+        assert!(committed.get(), "Ready wire credit must release the prepared encoder in the first poll");
+        // The runtime may fairly yield while draining 133 datagrams. The
+        // prepared encoder must already be released before that yield.
+        let report = match first_poll {
+            Poll::Ready(report) => report,
+            Poll::Pending => send.await,
+        };
+        assert_eq!(report.status, DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, 133);
     }
 
     #[tokio::test(flavor = "current_thread")]
