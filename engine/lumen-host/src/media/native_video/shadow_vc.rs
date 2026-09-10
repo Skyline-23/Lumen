@@ -26,7 +26,7 @@ pub(super) fn validate(format: PlatformVideoFormat, bytes: &[u8]) -> Result<(), 
     let (version, model, checkpoint) = if format.profile == PlatformVideoProfile::ShadowVcLuma16 {
         let range = if format.dynamic_range == PlatformDynamicRange::Hdr10 { "hdr10" } else { "sdr" };
         if value["dynamicRange"] != range { return Err("SCV3 dynamic range mismatch".into()); }
-        (3, LUMA_MODEL, LUMA_CHECKPOINT)
+        (4, LUMA_MODEL, LUMA_CHECKPOINT)
     } else if format.profile == PlatformVideoProfile::ShadowVcRegionalPredictor8 {
         (2, REGIONAL_MODEL, REGIONAL_CHECKPOINT)
     } else { (1, MODEL, CHECKPOINT) };
@@ -69,7 +69,7 @@ pub(super) fn configuration_from_frame(bytes: &[u8]) -> Result<Vec<u8>, String> 
 }
 
 fn luma_configuration_from_frame(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    if !(32..=8*1024*1024).contains(&bytes.len()) { return Err("invalid SCV3 frame length".into()); }
+    if !(41..=8*1024*1024).contains(&bytes.len()) { return Err("invalid SCV3 frame length".into()); }
     let read = |offset| u32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
     let id = read(4); let width = read(8); let height = read(12); let reference = read(16);
     if id == 0 || reference >= id || !dimensions(width.into(), height.into()) {
@@ -78,19 +78,16 @@ fn luma_configuration_from_frame(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let range = match read(20) { 1 => "sdr", 2 => "hdr10", _ => return Err("invalid SCV3 range".into()) };
     let indexes: Vec<u32> = (0..6).filter(|i| (i%3)*1280 < width && (i/3)*1088 < height).collect();
     if read(24) as usize != indexes.len() { return Err("invalid SCV3 tile count".into()); }
-    let mut cursor = 28;
-    for index in indexes {
-        if cursor+12 > bytes.len()-4 || read(cursor) != index { return Err("invalid SCV3 tile order".into()); }
-        let z = read(cursor+4) as usize; let base = read(cursor+8) as usize;
-        cursor += 12;
-        if z < 4 || base < 4 || z > bytes.len()-cursor-4 || base > bytes.len()-cursor-z-4 {
-            return Err("invalid SCV3 stream lengths".into());
-        }
-        cursor += z+base;
+    // The native codec owns lossless packing and tile validation. The host
+    // authenticates the bounded opaque envelope without decompressing it.
+    if &bytes[28..32] != b"LZ41" { return Err("unsupported SCV3 packing".into()); }
+    let expanded = read(32) as usize;
+    if !(indexes.len()*20..=8*1024*1024-40).contains(&expanded) {
+        return Err("invalid SCV3 expanded length".into());
     }
-    if cursor != bytes.len()-4 { return Err("trailing SCV3 data".into()); }
+    let cursor = bytes.len()-4;
     if crc32c::crc32c(&bytes[..cursor]) != read(cursor) { return Err("invalid SCV3 checksum".into()); }
-    serde_json::to_vec(&serde_json::json!({"version":3,"model":LUMA_MODEL,"checkpoint":LUMA_CHECKPOINT,
+    serde_json::to_vec(&serde_json::json!({"version":4,"model":LUMA_MODEL,"checkpoint":LUMA_CHECKPOINT,
         "width":width,"height":height,"dynamicRange":range})).map_err(|error| error.to_string())
 }
 
@@ -124,7 +121,10 @@ mod tests {
     fn luma16_envelope_binds_range_model_and_reference() {
         for (range, dynamic_range) in [(1_u32, PlatformDynamicRange::Sdr), (2, PlatformDynamicRange::Hdr10)] {
             let mut bytes = b"SCV3".to_vec();
-            for word in [7_u32, 2, 2, 6, range, 1, 0, 4, 4, 0, 0] { bytes.extend(word.to_le_bytes()); }
+            for word in [7_u32, 2, 2, 6, range, 1] { bytes.extend(word.to_le_bytes()); }
+            bytes.extend(b"LZ41");
+            bytes.extend(20_u32.to_le_bytes());
+            bytes.push(0); // Envelope validation does not decompress entropy data.
             let mut crc = !0_u32;
             for byte in &bytes { crc ^= u32::from(*byte); for _ in 0..8 { crc = (crc >> 1) ^ (0x82f63b78 & 0_u32.wrapping_sub(crc & 1)); } }
             bytes.extend((!crc).to_le_bytes());
@@ -133,6 +133,19 @@ mod tests {
                 profile: PlatformVideoProfile::ShadowVcLuma16, chroma_subsampling: PlatformChromaSubsampling::Yuv420,
                 bit_depth: 10, dynamic_range, color_range: PlatformColorRange::Limited };
             validate(format, &record).unwrap();
+            let mut legacy: serde_json::Value = serde_json::from_slice(&record).unwrap();
+            legacy["version"] = 3.into();
+            assert!(validate(format, &serde_json::to_vec(&legacy).unwrap()).is_err());
+            for expanded in [0_u32, 19, 8*1024*1024, u32::MAX] {
+                let mut bad = bytes[..bytes.len()-4].to_vec();
+                bad[32..36].copy_from_slice(&expanded.to_le_bytes());
+                bad.extend(crc32c::crc32c(&bad).to_le_bytes());
+                assert!(configuration_from_frame(&bad).is_err());
+            }
+            let mut legacy_frame = bytes[..bytes.len()-4].to_vec();
+            legacy_frame[28..32].fill(0);
+            legacy_frame.extend(crc32c::crc32c(&legacy_frame).to_le_bytes());
+            assert!(configuration_from_frame(&legacy_frame).is_err());
             assert!(validate(PlatformVideoFormat { profile: PlatformVideoProfile::ShadowVcRegionalPredictor8, ..format }, &record).is_err());
             let wrong_range = if range == 1 { PlatformDynamicRange::Hdr10 } else { PlatformDynamicRange::Sdr };
             assert!(validate(PlatformVideoFormat { dynamic_range: wrong_range, ..format }, &record).is_err());
