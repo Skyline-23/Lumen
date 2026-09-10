@@ -560,6 +560,7 @@ async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Space, Sen
     media_delivery_generation: u64,
     wire_budget_kbps: u32,
     maximum_datagram_payload: usize,
+    pacing_policy: VideoWirePacingPolicy,
     mut wait_for_capacity: Barrier,
     mut send_buffer_space: Space,
     mut send: Send,
@@ -605,18 +606,23 @@ where
     let reservation = {
         let mut pacer = wire_pacer.lock().await;
         if pacer
-            .prepare(session_epoch, media_delivery_generation, wire_budget_kbps)
+            .prepare(
+                session_epoch,
+                media_delivery_generation,
+                pacing_policy.frame_wire_budget_kbps(wire_budget_kbps, total_bytes),
+            )
             .is_err()
         {
             None
         } else {
             let before = pacer.clone();
             pacer
-                .reserve(
+                .reserve_with_credit_limit(
                     &datagram_bytes,
                     maximum_datagram_payload,
                     Instant::now(),
                     deadline,
+                    pacing_policy.maximum_credit_bytes(maximum_datagram_payload),
                 )
                 .map(|schedule| (schedule, before, pacer.clone()))
         }
@@ -1418,6 +1424,36 @@ impl Drop for PreparedVideoReceipt {
     fn drop(&mut self) { let _ = self.resolve(false); }
 }
 
+#[derive(Clone, Copy)]
+enum VideoWirePacingPolicy {
+    NegotiatedBudget,
+    FrameCadence { refresh_millihz: u32 },
+}
+
+impl VideoWirePacingPolicy {
+    fn frame_wire_budget_kbps(self, negotiated_kbps: u32, frame_bytes: usize) -> u32 {
+        match self {
+            Self::NegotiatedBudget => negotiated_kbps,
+            Self::FrameCadence { refresh_millihz } => {
+                // Spread the complete object, including packet headers and FEC,
+                // over two thirds of a refresh interval. The negotiated ceiling
+                // still limits large objects; source quality and cadence stay intact.
+                let cadence_kbps = ((frame_bytes as u128) * 8 * u128::from(refresh_millihz) * 3)
+                    .div_ceil(2_000_000);
+                cadence_kbps.min(u128::from(negotiated_kbps)) as u32
+            }
+        }
+    }
+
+    fn maximum_credit_bytes(self, maximum_datagram_payload: usize) -> usize {
+        match self {
+            Self::NegotiatedBudget => MAXIMUM_VIDEO_WIRE_CREDIT_BYTES,
+            Self::FrameCadence { .. } =>
+                maximum_datagram_payload.saturating_mul(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(super) struct VideoWireRatePacer {
     session_epoch: Option<u32>,
@@ -1458,6 +1494,20 @@ impl VideoWireRatePacer {
         now: Instant,
         deadline: Instant,
     ) -> Option<Vec<Instant>> {
+        self.reserve_with_credit_limit(
+            datagram_bytes, maximum_datagram_payload, now, deadline,
+            MAXIMUM_VIDEO_WIRE_CREDIT_BYTES,
+        )
+    }
+
+    fn reserve_with_credit_limit(
+        &mut self,
+        datagram_bytes: &[usize],
+        maximum_datagram_payload: usize,
+        now: Instant,
+        deadline: Instant,
+        maximum_credit_bytes: usize,
+    ) -> Option<Vec<Instant>> {
         let initial_burst_bits = u64::try_from(maximum_datagram_payload)
             .ok()?
             .checked_mul(u64::try_from(MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS).ok()?)?
@@ -1467,7 +1517,7 @@ impl VideoWireRatePacer {
             .checked_div(1_000)?;
         let maximum_credit_bits = duration_credit_bits
             .min(
-                u64::try_from(MAXIMUM_VIDEO_WIRE_CREDIT_BYTES)
+                u64::try_from(maximum_credit_bytes)
                     .ok()?
                     .checked_mul(8)?,
             )
@@ -2446,6 +2496,12 @@ async fn poll_and_send_video(
         packetized.datagrams.iter().map(Vec::len).sum(),
     );
     let prepared_receipt = sender.pending_receipt.clone();
+    let pacing_policy = match delivery.video_format.profile {
+        crate::PlatformVideoProfile::ShadowVcLuma16 => VideoWirePacingPolicy::FrameCadence {
+            refresh_millihz: delivery.refresh_millihz,
+        },
+        _ => VideoWirePacingPolicy::NegotiatedBudget,
+    };
     let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
@@ -2457,6 +2513,7 @@ async fn poll_and_send_video(
         delivery.media_delivery_generation,
         delivery.wire_budget_kbps,
         delivery.maximum_datagram_payload,
+        pacing_policy,
         |required_capacity, deadline| {
             wait_for_connection_datagram_queue_capacity(connection, required_capacity, deadline)
         },
@@ -2785,7 +2842,7 @@ mod tests {
             let report = send_wire_paced_video_datagram_batch(
                 packetized.datagrams, 16 * 1_200, 0,
                 Instant::now() + Duration::from_millis(500), &gate, &pacer, 9, 0,
-                1_000_000, 1_200,
+                1_000_000, 1_200, VideoWirePacingPolicy::FrameCadence { refresh_millihz: 120_000 },
                 move |_, _| async move { if scenario == 0 { Err(DatagramDeadlineElapsed) } else { Ok(Duration::ZERO) } },
                 || 16 * 1_200,
                 move |_, _, _| {
@@ -2879,6 +2936,7 @@ mod tests {
             predictive_video_queue_reserve_bytes(crate::PlatformVideoProfile::ShadowVcLuma16,
                 700_000, 16_668, object_bytes),
             Instant::now() + Duration::from_secs(1), &gate, &pacer, 7, 1, 700_000, 1_200,
+            VideoWirePacingPolicy::FrameCadence { refresh_millihz: 120_000 },
             move |required, deadline| {
                 let space = Rc::clone(&barrier_queue);
                 let drain = Rc::clone(&barrier_queue);
@@ -2919,7 +2977,7 @@ mod tests {
         DatagramDeadlineElapsed, DatagramSendOutcome, NormalizedNativeVideoFrame,
         PacketArrivalHistoryWarningReporter, PacketArrivalSendObservation, SessionDelivery,
         VideoBootstrapClassification, VideoDatagramCompletion, VideoDatagramDeadlineError,
-        VideoDatagramPacing, VideoSenderState, VideoWireRatePacer,
+        VideoDatagramPacing, VideoSenderState, VideoWireRatePacer, VideoWirePacingPolicy,
         MAXIMUM_VIDEO_WIRE_BURST_DATAGRAMS, MAXIMUM_VIDEO_WIRE_CREDIT_DURATION,
     };
     use lumen_engine::{
@@ -3352,6 +3410,70 @@ mod tests {
     }
 
     #[test]
+    fn fc3_frame_pacing_uses_packetized_bytes_and_respects_the_negotiated_ceiling() {
+        let policy = VideoWirePacingPolicy::FrameCadence { refresh_millihz: 120_000 };
+        assert_eq!(policy.frame_wire_budget_kbps(700_000, 60_000), 86_400);
+        assert_eq!(policy.frame_wire_budget_kbps(700_000, 72_000), 103_680);
+        assert_eq!(policy.frame_wire_budget_kbps(50_000, 72_000), 50_000);
+        assert_eq!(policy.frame_wire_budget_kbps(0, 72_000), 0);
+        assert_eq!(VideoWirePacingPolicy::NegotiatedBudget.frame_wire_budget_kbps(700_000, 60_000), 700_000);
+    }
+
+    #[test]
+    fn fc3_idle_credit_cannot_flush_an_entire_frame_at_once() {
+        const MTU: usize = 1_200;
+        let policy = VideoWirePacingPolicy::FrameCadence { refresh_millihz: 120_000 };
+        let origin = Instant::now();
+        let now = origin + Duration::from_secs(1);
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(9, 0, policy.frame_wire_budget_kbps(700_000, 100 * MTU)).unwrap();
+        pacer.reserve(&[MTU], MTU, origin, origin + Duration::from_millis(1)).unwrap();
+        let mut previous_policy = pacer.clone();
+        let frame = vec![MTU; 100];
+        let deadline = now + Duration::from_millis(9);
+        let old_schedule = previous_policy.reserve(&frame, MTU, now, deadline).unwrap();
+        assert!(old_schedule.iter().all(|send_at| *send_at == now));
+
+        let schedule = pacer.reserve_with_credit_limit(
+            &frame, MTU, now, deadline, policy.maximum_credit_bytes(MTU),
+        ).unwrap();
+        assert_eq!(schedule.iter().filter(|send_at| **send_at == now).count(), 2);
+        let last = *schedule.last().unwrap();
+        assert!(last >= now + Duration::from_millis(5));
+        assert!(last <= now + Duration::from_micros(5_556));
+    }
+
+    #[test]
+    fn fc3_frame_pacing_retains_debt_and_rejects_expired_reservations_atomically() {
+        const MTU: usize = 1_200;
+        let policy = VideoWirePacingPolicy::FrameCadence { refresh_millihz: 120_000 };
+        let origin = Instant::now();
+        let mut pacer = VideoWireRatePacer::default();
+        pacer.prepare(9, 0, policy.frame_wire_budget_kbps(6_000, 60_000)).unwrap();
+        let schedule = pacer.reserve_with_credit_limit(
+            &[MTU; 50], MTU, origin, origin + Duration::from_millis(100),
+            policy.maximum_credit_bytes(MTU),
+        ).unwrap();
+        let pending_until = *schedule.last().unwrap();
+        pacer.prepare(9, 0, policy.frame_wire_budget_kbps(48_000, 72_000)).unwrap();
+        assert_eq!(pacer.next_send_at, Some(pending_until));
+        let before = pacer.clone();
+        assert!(pacer.reserve_with_credit_limit(
+            &[MTU; 60], MTU, origin, origin + Duration::from_millis(8),
+            policy.maximum_credit_bytes(MTU),
+        ).is_none());
+        assert_eq!(pacer.next_send_at, before.next_send_at);
+        assert_eq!(pacer.wire_credit_bits, before.wire_credit_bits);
+        let next = pacer.reserve_with_credit_limit(
+            &[MTU; 60], MTU, origin, origin + Duration::from_secs(1),
+            policy.maximum_credit_bytes(MTU),
+        ).unwrap();
+        assert!(next[0] >= pending_until);
+        pacer.prepare(9, 1, 48_000).unwrap();
+        assert_eq!(pacer.next_send_at, None);
+    }
+
+    #[test]
     fn emitted_wire_pacer_accounts_exact_packetized_bytes_without_nominal_fec_math() {
         let origin = Instant::now();
         let deadline = origin + Duration::from_secs(1);
@@ -3501,6 +3623,7 @@ mod tests {
             0,
             1_200,
             1_200,
+            VideoWirePacingPolicy::NegotiatedBudget,
             |_, _| async {
                 tokio::time::sleep(Duration::from_millis(25)).await;
                 Ok(Duration::from_millis(25))
@@ -3542,6 +3665,7 @@ mod tests {
             0,
             48_000,
             1_200,
+            VideoWirePacingPolicy::NegotiatedBudget,
             |_, _| async { Ok(Duration::ZERO) },
             || 16 * 1_200,
             move |mode, _, send_deadline| {
@@ -3590,6 +3714,7 @@ mod tests {
             0,
             48_000,
             1_200,
+            VideoWirePacingPolicy::NegotiatedBudget,
             |_, _| async { Ok(Duration::ZERO) },
             || 16 * 1_200,
             move |mode, _, _| {
@@ -4142,6 +4267,7 @@ mod tests {
             0,
             48_000,
             4,
+            VideoWirePacingPolicy::NegotiatedBudget,
             |required_capacity, _| {
                 assert_eq!(required_capacity, 8);
                 async { Ok(Duration::ZERO) }
