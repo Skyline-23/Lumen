@@ -35,6 +35,9 @@ enum VideoProfile {
   VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16 = 9;
   // Predictive SCV2 frames, exact 8-bit SDR420 regional predictor, limited P010 output.
   VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8 = 10;
+  // SCV3 q52 FC3 Luma16 frames with explicit temporal references and model identity.
+  // P010 output; SDR BT.709 or negotiated HDR10 PQ/BT.2020.
+  VIDEO_PROFILE_SHADOW_VC_LUMA16 = 11;
 }
 
 enum ChromaSubsampling {
@@ -245,6 +248,9 @@ message CodecConfiguration {
   uint32 stream_id = 2;
   uint32 configuration_id = 3;
   VideoCodec codec = 4;
+  // SCV3 uses version=3, model=fc3-luma16-v1, checkpoint SHA256
+  // af2da39131bfd7df42f0bc5942025e56effae15d7b68ef1ad79e9d428a92e052,
+  // width, height, and dynamicRange (sdr or hdr10); q52 and tile geometry are fixed.
   // SHADOW_VC: bounded (1024 byte) UTF-8 JSON with version=1, model, checkpoint,
   // width and height matching the selected mode. The immutable model is
   // fc3-spatial-base16-v1; checkpoint SHA256 is
