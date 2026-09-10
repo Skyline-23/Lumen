@@ -29,18 +29,25 @@ pub(super) async fn apply_reserved_adaptive_video_policy(
     let mut publication_error = None;
     while let Some(proposal) = next.take() {
         let decision = proposal.decision;
-        let transaction_platform = Arc::clone(&platform);
-        let platform_worker = tokio::task::spawn_blocking(move || {
-            transaction_platform.handle_control_event(
-                session_epoch,
-                PlatformControlEvent::SetVideoDeliveryPolicy {
-                    policy_revision: proposal.platform_policy_revision,
-                    bitrate_kbps: decision.encoder_bitrate_kbps,
-                    admission_divisor: decision.admission_divisor,
-                },
-            )
-        })
-        .await;
+        let platform_policy_required = proposal.requires_platform_policy();
+        // A fixed-quality learned encoder has no bitrate control to apply.
+        // Commit wire pacing/FEC directly when source admission is unchanged.
+        // An admission change still needs explicit platform acknowledgement.
+        let platform_worker = if platform_policy_required {
+            let transaction_platform = Arc::clone(&platform);
+            tokio::task::spawn_blocking(move || {
+                transaction_platform.handle_control_event(
+                    session_epoch,
+                    PlatformControlEvent::SetVideoDeliveryPolicy {
+                        policy_revision: proposal.platform_policy_revision,
+                        bitrate_kbps: decision.encoder_bitrate_kbps,
+                        admission_divisor: decision.admission_divisor,
+                    },
+                )
+            }).await
+        } else {
+            Ok(Ok(()))
+        };
         let platform_result = match platform_worker {
             Ok(result) => result,
             Err(error) => {
@@ -70,7 +77,7 @@ pub(super) async fn apply_reserved_adaptive_video_policy(
                 publication_error.get_or_insert(error);
             }
             eprintln!(
-                "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
+                "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-budget-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?} encoder-policy-applied={platform_policy_required}",
                 decision.wire_budget_kbps,
                 decision.encoder_bitrate_kbps,
                 decision.fec_percentage,
@@ -121,6 +128,7 @@ fn publish_adaptive_video_rejection(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use lumen_engine::MediaFeedback;
@@ -131,6 +139,64 @@ mod tests {
     use crate::PlatformSessionPlan;
 
     struct PanickingAdaptivePlatform;
+
+    #[derive(Default)]
+    struct FixedQualityPlatform {
+        policy_calls: AtomicUsize,
+    }
+
+    impl PlatformSessionControl for FixedQualityPlatform {
+        fn start_session(&self, _: PlatformSessionPlan) -> Result<(), String> { Ok(()) }
+        fn stop_session(&self) -> Result<(), String> { Ok(()) }
+        fn handle_control_event(&self, _: u32, event: PlatformControlEvent) -> Result<(), String> {
+            if matches!(event, PlatformControlEvent::SetVideoDeliveryPolicy { .. }) {
+                self.policy_calls.fetch_add(1, Ordering::Relaxed);
+                return Err("fixed-quality encoder has no bitrate setter".to_owned());
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn fixed_quality_transport_adapts_without_claiming_encoder_bitrate_applied() {
+        let platform = Arc::new(FixedQualityPlatform::default());
+        let (_root, mut router, context, plan) = started_native_router(platform.clone());
+        let video = MediaFeedback {
+            stream_id: plan.video_stream_id, received_datagrams: 50,
+            first_datagram_sequence: 1, highest_datagram_sequence: 100,
+            window_milliseconds: 250, feedback_window_id: 1,
+            ..MediaFeedback::default()
+        };
+        let audio = MediaFeedback {
+            stream_id: plan.audio_stream_id, received_datagrams: 1,
+            first_datagram_sequence: 1, highest_datagram_sequence: 1,
+            window_milliseconds: 250, feedback_window_id: 1,
+            ..MediaFeedback::default()
+        };
+        router.observe_native_media_feedback(&video, context.session_epoch).unwrap();
+        let NativeMediaFeedbackDisposition::Applied(mut proposal) = router
+            .observe_native_media_feedback(&audio, context.session_epoch).unwrap() else {
+            panic!("loss must reserve a transport policy");
+        };
+        proposal.encoder_bitrate_control = false;
+        assert!(!proposal.requires_platform_policy());
+        let expected = proposal.decision;
+        assert_ne!(expected.wire_budget_kbps, proposal.base.wire_budget_kbps);
+
+        // Pacing the source is still an actual platform operation. It must not
+        // be acknowledged merely because this model has fixed coding quality.
+        let mut changed_admission = proposal.clone();
+        changed_admission.decision.admission_divisor = 2;
+        assert!(changed_admission.requires_platform_policy());
+
+        let router = Arc::new(Mutex::new(router));
+        apply_reserved_adaptive_video_policy(&router, platform.clone(), context.session_epoch, proposal)
+            .await.unwrap();
+        assert_eq!(platform.policy_calls.load(Ordering::Relaxed), 0);
+        let delivery = router.lock().unwrap().video_delivery_state().unwrap();
+        assert_eq!(delivery.wire_budget_kbps, expected.wire_budget_kbps);
+        assert_eq!(delivery.fec_percentage, expected.fec_percentage);
+    }
 
     impl PlatformSessionControl for PanickingAdaptivePlatform {
         fn start_session(&self, _: PlatformSessionPlan) -> Result<(), String> {

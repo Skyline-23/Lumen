@@ -62,8 +62,55 @@ pub(crate) struct AdaptiveVideoProposal {
     pub(crate) base: AdaptiveVideoDecision,
     pub(crate) decision: AdaptiveVideoDecision,
     pub(crate) platform_policy_revision: u32,
+    /// Learned profiles have fixed coding parameters. Their derived encoder
+    /// budget is not a supported encoder bitrate setter; transport still adapts.
+    pub(crate) encoder_bitrate_control: bool,
     lane_revision: u64,
     controller: AdaptiveVideoDeliveryController,
+}
+
+impl AdaptiveVideoProposal {
+    pub(crate) fn requires_platform_policy(&self) -> bool {
+        self.encoder_bitrate_control
+            || self.base.admission_divisor != self.decision.admission_divisor
+    }
+}
+
+fn native_encoder_controls_bitrate(plan: &HostSessionPlan) -> bool {
+    !plan.selected_video_capability.as_ref()
+        .and_then(|capability| capability.format.as_ref())
+        .is_some_and(|format| matches!(
+            NativeVideoProfile::try_from(format.profile),
+            Ok(NativeVideoProfile::ShadowVcSpatialBase16
+                | NativeVideoProfile::ShadowVcRegionalPredictor8
+                | NativeVideoProfile::ShadowVcLuma16)
+        ))
+}
+
+#[cfg(test)]
+mod encoder_rate_control_tests {
+    use super::*;
+    use lumen_engine::{NativeVideoCapability, NativeVideoFormat};
+
+    #[test]
+    fn learned_profiles_only_skip_the_unsupported_bitrate_setter() {
+        for (profile, expected) in [
+            (NativeVideoProfile::ShadowVcLuma16, false),
+            (NativeVideoProfile::ShadowVcRegionalPredictor8, false),
+            (NativeVideoProfile::ShadowVcSpatialBase16, false),
+            (NativeVideoProfile::HevcMain10, true),
+        ] {
+            let plan = HostSessionPlan {
+                selected_video_capability: Some(NativeVideoCapability {
+                    format: Some(NativeVideoFormat { profile: profile as i32, ..Default::default() }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            assert_eq!(native_encoder_controls_bitrate(&plan), expected);
+        }
+        assert!(native_encoder_controls_bitrate(&HostSessionPlan::default()));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1738,6 +1785,7 @@ impl ControlRouter {
                     base,
                     decision,
                     platform_policy_revision: pending.plan.policy_revision,
+                    encoder_bitrate_control: native_encoder_controls_bitrate(&pending.plan),
                     lane_revision: pending.adaptive_policy_lane.revision,
                     controller,
                 };
@@ -1817,6 +1865,7 @@ impl ControlRouter {
                 base,
                 decision,
                 platform_policy_revision: pending.plan.policy_revision,
+                encoder_bitrate_control: native_encoder_controls_bitrate(&pending.plan),
                 lane_revision: pending.adaptive_policy_lane.revision,
                 controller,
             };
@@ -1892,6 +1941,7 @@ impl ControlRouter {
             base,
             decision,
             platform_policy_revision: pending.plan.policy_revision,
+            encoder_bitrate_control: native_encoder_controls_bitrate(&pending.plan),
             lane_revision: pending.adaptive_policy_lane.revision,
             controller,
         };
