@@ -406,6 +406,18 @@ pub(crate) fn started_native_router(
     NativeConnectionContext,
     HostSessionPlan,
 ) {
+    started_native_router_with_format(platform, None)
+}
+
+pub(crate) fn started_native_router_with_format(
+    platform: Arc<dyn PlatformSessionControl>,
+    format: Option<NativeVideoFormat>,
+) -> (
+    tempfile::TempDir,
+    ControlRouter,
+    NativeConnectionContext,
+    HostSessionPlan,
+) {
     let (root, mut router) = router_with_platform(platform);
     router
         .authorities()
@@ -413,19 +425,26 @@ pub(crate) fn started_native_router(
         .upsert(r#"{"uuid":"native-desktop","name":"Desktop"}"#)
         .unwrap();
     let application_id = router.authorities().applications().applications().unwrap()[0].id;
-    let context = native_context();
+    let mut context = native_context();
+    let mut hello = native_hello(application_id);
+    if let Some(format) = format {
+        if format.profile == NativeVideoProfile::ShadowVcLuma16 as i32 {
+            hello.media_capabilities |= lumen_engine::NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+        }
+        hello.requested_video_format = Some(format.clone());
+        hello.video_capabilities[0].format = Some(format.clone());
+        context.host_capabilities.video_capabilities[0].format = Some(format);
+    }
     let responses = router.dispatch_native_control(
         ClientControlEnvelope {
             request_id: 1,
-            payload: Some(client_control_envelope::Payload::Hello(native_hello(
-                application_id,
-            ))),
+            payload: Some(client_control_envelope::Payload::Hello(hello)),
         },
         &context,
     );
     let host_control_envelope::Payload::SessionPlan(plan) = responses[0].payload.clone().unwrap()
     else {
-        panic!("expected native session plan");
+        panic!("expected native session plan: {responses:?}");
     };
     let responses = router.dispatch_native_control(
         ClientControlEnvelope {

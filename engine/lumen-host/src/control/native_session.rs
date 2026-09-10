@@ -66,6 +66,13 @@ pub(crate) struct AdaptiveVideoProposal {
     controller: AdaptiveVideoDeliveryController,
 }
 
+impl AdaptiveVideoProposal {
+    pub(crate) fn changes_encoder_policy(&self) -> bool {
+        self.base.encoder_bitrate_kbps != self.decision.encoder_bitrate_kbps
+            || self.base.admission_divisor != self.decision.admission_divisor
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum NativeAdaptiveVideoPolicyRequest {
     Applied(AdaptiveVideoProposal),
@@ -3580,7 +3587,7 @@ fn adaptive_video_controller(
         selected_format.bit_depth,
         dynamic_range,
     )?;
-    Some(AdaptiveVideoDeliveryController::new_with_quality_floor(
+    let controller = AdaptiveVideoDeliveryController::new_with_quality_floor(
         plan.bitrate_kbps,
         plan.bitrate_kbps,
         initial_fec_percentage,
@@ -3588,7 +3595,12 @@ fn adaptive_video_controller(
         quality_floor_encoder_kbps,
         plan.refresh_millihz,
         plan.maximum_datagram_payload,
-    ))
+    );
+    Some(if selected_format.codec == NativeVideoCodec::ShadowVc as i32 {
+        controller.with_fixed_encoder_policy()
+    } else {
+        controller
+    })
 }
 
 fn native_error(request_id: u64, code: u32, message: impl Into<String>) -> HostControlEnvelope {

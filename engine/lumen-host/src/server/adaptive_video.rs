@@ -29,18 +29,26 @@ pub(super) async fn apply_reserved_adaptive_video_policy(
     let mut publication_error = None;
     while let Some(proposal) = next.take() {
         let decision = proposal.decision;
-        let transaction_platform = Arc::clone(&platform);
-        let platform_worker = tokio::task::spawn_blocking(move || {
-            transaction_platform.handle_control_event(
-                session_epoch,
-                PlatformControlEvent::SetVideoDeliveryPolicy {
-                    policy_revision: proposal.platform_policy_revision,
-                    bitrate_kbps: decision.encoder_bitrate_kbps,
-                    admission_divisor: decision.admission_divisor,
-                },
-            )
-        })
-        .await;
+        let changes_encoder_policy = proposal.changes_encoder_policy();
+        let platform_worker = if changes_encoder_policy {
+            let transaction_platform = Arc::clone(&platform);
+            tokio::task::spawn_blocking(move || {
+                transaction_platform.handle_control_event(
+                    session_epoch,
+                    PlatformControlEvent::SetVideoDeliveryPolicy {
+                        policy_revision: proposal.platform_policy_revision,
+                        bitrate_kbps: decision.encoder_bitrate_kbps,
+                        admission_divisor: decision.admission_divisor,
+                    },
+                )
+            })
+            .await
+        } else {
+            // FEC and wire pacing belong to the router. No encoder operation was
+            // requested, so there is no platform transaction to reject. The
+            // epoch/revision checks below still fence the transport commit.
+            Ok(Ok(()))
+        };
         let platform_result = match platform_worker {
             Ok(result) => result,
             Err(error) => {
@@ -70,7 +78,7 @@ pub(super) async fn apply_reserved_adaptive_video_policy(
                 publication_error.get_or_insert(error);
             }
             eprintln!(
-                "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?}",
+                "Lumen native media stage=adaptive-video-applied session-epoch={session_epoch} wire-budget-kbps={} encoder-bitrate-kbps={} fec-percentage={} admission-divisor={} congestion-source={:?} encoder-policy-changed={changes_encoder_policy}",
                 decision.wire_budget_kbps,
                 decision.encoder_bitrate_kbps,
                 decision.fec_percentage,
@@ -129,6 +137,82 @@ mod tests {
     use crate::control::tests::started_native_router;
     use crate::control::NativeMediaFeedbackDisposition;
     use crate::PlatformSessionPlan;
+
+    #[tokio::test]
+    async fn fc3_transport_policy_commits_without_calling_the_encoder_and_rejects_stale_epoch() {
+        use lumen_engine::{
+            NativeChromaSubsampling, NativeColorRange, NativeDynamicRange, NativeVideoCodec,
+            NativeVideoFormat, NativeVideoProfile,
+        };
+        let platform: Arc<dyn PlatformSessionControl> = Arc::new(PanickingAdaptivePlatform);
+        let (_root, mut router, context, plan) =
+            crate::control::tests::started_native_router_with_format(
+                Arc::clone(&platform),
+                Some(NativeVideoFormat {
+                    codec: NativeVideoCodec::ShadowVc as i32,
+                    profile: NativeVideoProfile::ShadowVcLuma16 as i32,
+                    chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+                    bit_depth: 10,
+                    dynamic_range: NativeDynamicRange::Sdr as i32,
+                    color_range: NativeColorRange::Limited as i32,
+                }),
+            );
+        let initial = router.video_delivery_state().unwrap();
+        let video = MediaFeedback {
+            stream_id: plan.video_stream_id,
+            received_datagrams: 99,
+            first_datagram_sequence: 1,
+            highest_datagram_sequence: 100,
+            unrecoverable_objects: 1,
+            window_milliseconds: 250,
+            feedback_window_id: 1,
+            ..MediaFeedback::default()
+        };
+        let audio = MediaFeedback {
+            stream_id: plan.audio_stream_id,
+            received_datagrams: 1,
+            first_datagram_sequence: 1,
+            highest_datagram_sequence: 1,
+            window_milliseconds: 250,
+            feedback_window_id: 1,
+            ..MediaFeedback::default()
+        };
+        assert!(matches!(
+            router
+                .observe_native_media_feedback(&video, context.session_epoch)
+                .unwrap(),
+            NativeMediaFeedbackDisposition::AwaitingPair { .. }
+        ));
+        let NativeMediaFeedbackDisposition::Applied(proposal) = router
+            .observe_native_media_feedback(&audio, context.session_epoch)
+            .unwrap()
+        else {
+            panic!("loss must reserve a transport change");
+        };
+        assert!(!proposal.changes_encoder_policy());
+        assert_eq!(proposal.decision.fec_percentage, 30);
+        let router = Arc::new(Mutex::new(router));
+        apply_reserved_adaptive_video_policy(
+            &router,
+            Arc::clone(&platform),
+            context.session_epoch + 1,
+            proposal.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            router.lock().unwrap().video_delivery_state().unwrap(),
+            initial
+        );
+        apply_reserved_adaptive_video_policy(&router, platform, context.session_epoch, proposal)
+            .await
+            .unwrap();
+        let applied = router.lock().unwrap().video_delivery_state().unwrap();
+        assert_eq!(applied.fec_percentage, 30);
+        assert_eq!(applied.target_bitrate_kbps, initial.target_bitrate_kbps);
+        assert_eq!(applied.admission_divisor, 1);
+        assert!(applied.wire_budget_kbps <= initial.wire_budget_kbps);
+    }
 
     struct PanickingAdaptivePlatform;
 
