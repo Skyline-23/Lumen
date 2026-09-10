@@ -2128,7 +2128,7 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
         },
     )
     .collect();
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(target_os = "macos")]
     if shadow_vc_model_is_provisioned() {
         capabilities.push(NativeVideoCapability {
             format: Some(NativeVideoFormat { codec: NativeVideoCodec::ShadowVc as i32,
@@ -2139,8 +2139,8 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             hardware_accelerated: Some(true),
         });
     }
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if shadow_vc_os_supported() {
+    #[cfg(target_os = "macos")]
+    {
         capabilities.push(NativeVideoCapability {
             format: Some(NativeVideoFormat { codec: NativeVideoCodec::ShadowVc as i32,
                 profile: NativeVideoProfile::ShadowVcRegionalPredictor8 as i32,
@@ -2149,24 +2149,39 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             max_width: 3840, max_height: 2160, max_refresh_millihz: 240_000,
             hardware_accelerated: Some(false),
         });
+        if shadow_vc_luma16_is_provisioned() {
+            for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
+                capabilities.push(NativeVideoCapability {
+                    format: Some(NativeVideoFormat {
+                        codec: NativeVideoCodec::ShadowVc as i32,
+                        profile: NativeVideoProfile::ShadowVcLuma16 as i32,
+                        chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32, bit_depth: 10,
+                        dynamic_range: range as i32, color_range: NativeColorRange::Limited as i32,
+                    }),
+                    max_width: 3840, max_height: 2160, max_refresh_millihz: 240_000,
+                    hardware_accelerated: Some(true),
+                });
+            }
+        }
     }
     capabilities
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-fn shadow_vc_os_supported() -> bool {
-    std::process::Command::new("/usr/bin/sw_vers").arg("-productVersion")
-        .output().ok().filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
-        .is_some_and(|major| major >= 27)
+#[cfg(target_os = "macos")]
+fn shadow_vc_luma16_is_provisioned() -> bool {
+    std::env::current_exe().ok()
+        .and_then(|path| path.parent()?.parent().map(|contents| contents.join("Resources")))
+        .is_some_and(|resources| [
+            "ShadowVC_ShadowVCRuntime.bundle/Contents/Resources/FC3/manifest.json",
+            "ShadowVC_ShadowVC3Encoder.bundle/Contents/Resources/FC3Analysis/manifest.json",
+        ].iter().all(|manifest| resources.join(manifest).is_file()))
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn shadow_vc_model_is_provisioned() -> bool {
     let model = std::env::current_exe().ok().and_then(|path|
         path.parent()?.parent().map(|contents| contents.join("Resources/ShadowVCModels/model.json")));
-    shadow_vc_os_supported() && model.is_some_and(|path| path.is_file())
+    model.is_some_and(|path| path.is_file())
 }
 
 fn load_server_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig, String> {

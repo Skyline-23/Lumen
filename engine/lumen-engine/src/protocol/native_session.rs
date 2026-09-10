@@ -199,6 +199,7 @@ pub enum NativeVideoProfile {
     Av1Main = 8,
     ShadowVcSpatialBase16 = 9,
     ShadowVcRegionalPredictor8 = 10,
+    ShadowVcLuma16 = 11,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -1340,6 +1341,13 @@ fn exact_video_format(format: &NativeVideoFormat) -> Option<ExactVideoFormat> {
                 && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
                 && exact.bit_depth == 10
                 && exact.dynamic_range == NativeDynamicRange::Sdr
+                && exact.color_range == NativeColorRange::Limited
+        }
+        NativeVideoProfile::ShadowVcLuma16 => {
+            exact.codec == NativeVideoCodec::ShadowVc
+                && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
+                && exact.bit_depth == 10
+                && matches!(exact.dynamic_range, NativeDynamicRange::Sdr | NativeDynamicRange::Hdr10)
                 && exact.color_range == NativeColorRange::Limited
         }
         NativeVideoProfile::Unspecified => false,

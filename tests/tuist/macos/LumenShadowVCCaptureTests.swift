@@ -27,6 +27,22 @@ private actor ShadowVCCaptureProbe {
 }
 
 final class LumenShadowVCCaptureTests: XCTestCase {
+    func testLuma16BindsHDRToP010PQAndRejects444() throws {
+        let hdr = LumenMacCaptureConfiguration(displayID:0, codec:.shadowVC,
+            videoProfile:.shadowVCLuma16, bitDepth:10, dynamicRange:.hdr10,
+            requestedWidth:2816,requestedHeight:1836)
+        try hdr.validateExactVideoFormat()
+        XCTAssertTrue(hdr.usesHDRTransport)
+        let source = try LumenExactCaptureSourceContract(configuration:hdr,width:2816,height:1836)
+        XCTAssertEqual(source.pixelFormat,kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        XCTAssertEqual(source.colorPrimaries,kCVImageBufferColorPrimaries_ITU_R_2020 as String)
+        XCTAssertEqual(source.transferFunction,kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String)
+        let unsupported = LumenMacCaptureConfiguration(displayID:0, codec:.shadowVC,
+            videoProfile:.shadowVCLuma16,chromaSubsampling:.yuv444,bitDepth:10,dynamicRange:.hdr10,
+            requestedWidth:2816,requestedHeight:1836)
+        XCTAssertThrowsError(try unsupported.validateExactVideoFormat())
+    }
+
     func testShadowVCRejectsHDRAnd444InsteadOfChangingTheFormat() throws {
         let valid = LumenMacCaptureConfiguration(displayID: 0, codec: .shadowVC,
             videoProfile: .shadowVCSpatialBase16, bitDepth: 10, dynamicRange: .sdr,

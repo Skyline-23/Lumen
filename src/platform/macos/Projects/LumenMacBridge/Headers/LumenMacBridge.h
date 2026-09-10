@@ -188,7 +188,9 @@ typedef enum LumenMacCaptureVideoProfile {
   LumenMacCaptureVideoProfileHEVCMain10 = 4,
   LumenMacCaptureVideoProfileHEVCMain444 = 5,
   LumenMacCaptureVideoProfileHEVCMain44410 = 6,
-  LumenMacCaptureVideoProfileShadowVCSpatialBase16 = 8
+  LumenMacCaptureVideoProfileShadowVCSpatialBase16 = 8,
+  LumenMacCaptureVideoProfileShadowVCRegionalPredictor8 = 9,
+  LumenMacCaptureVideoProfileShadowVCLuma16 = 10
 } LumenMacCaptureVideoProfile;
 
 typedef enum LumenMacCaptureChromaSubsampling {

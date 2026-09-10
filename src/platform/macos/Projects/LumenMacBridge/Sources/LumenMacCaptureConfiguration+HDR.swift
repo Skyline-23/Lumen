@@ -1,5 +1,10 @@
 extension LumenMacCaptureConfiguration {
     var encodedColorConfiguration: LumenVideoHDRConfiguration? {
+        if videoProfile == .shadowVCLuma16 && dynamicRange == .hdr10 {
+            return LumenVideoHDRConfiguration(sourceColorPrimaries: resolvedSourceColorPrimaries,
+                colorPrimaries: .ituR2020, transferFunction: .smpteSt2084PQ,
+                yCbCrMatrix: .ituR2020, metadataInsertionMode: .automatic)
+        }
         if usesHDRTransport ||
             negotiatedDynamicRangeTransport ==
                 LumenMacDynamicRangeTransportSDRBaseHDROverlay,

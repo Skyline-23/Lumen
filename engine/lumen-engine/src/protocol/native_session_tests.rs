@@ -184,6 +184,27 @@ fn regional_predictor_negotiates_explicit_cpu_capabilities() {
 }
 
 #[test]
+fn luma16_negotiates_sdr_and_hdr_without_relabeling_fc4() {
+    for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
+        let format = NativeVideoFormat {
+            codec: NativeVideoCodec::ShadowVc as i32, profile: NativeVideoProfile::ShadowVcLuma16 as i32,
+            chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32, bit_depth: 10,
+            dynamic_range: range as i32, color_range: NativeColorRange::Limited as i32,
+        };
+        let mut client = hello();
+        client.sink_transfer = if range == NativeDynamicRange::Hdr10 { NativeDisplayTransfer::Pq as i32 } else { NativeDisplayTransfer::Sdr as i32 };
+        client.requested_video_format = Some(format.clone());
+        client.video_capabilities = vec![capability_with_format(format.clone())];
+        let mut host = host();
+        host.video_capabilities = client.video_capabilities.clone();
+        let plan = negotiate_native_session(&client, &host, 9).unwrap();
+        assert_eq!(plan.selected_video_capability.unwrap().format, Some(format));
+        host.video_capabilities[0].format.as_mut().unwrap().profile = NativeVideoProfile::ShadowVcRegionalPredictor8 as i32;
+        assert!(negotiate_native_session(&client, &host, 9).is_err());
+    }
+}
+
+#[test]
 fn shadow_vc_rejects_odd_rotated_and_oversized_geometry() {
     let format = NativeVideoFormat {
         codec: NativeVideoCodec::ShadowVc as i32,

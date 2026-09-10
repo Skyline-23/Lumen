@@ -48,7 +48,7 @@ fn predictive_video_queue_reserve_bytes(
     maximum_object_delay_us: u32,
     object_bytes: usize,
 ) -> usize {
-    if profile != crate::PlatformVideoProfile::ShadowVcRegionalPredictor8 {
+    if !matches!(profile, crate::PlatformVideoProfile::ShadowVcRegionalPredictor8 | crate::PlatformVideoProfile::ShadowVcLuma16) {
         return NATIVE_AUDIO_EGRESS_RESERVE_BYTES;
     }
     // The QUIC buffer is sized for transport bursts, not interactive latency.

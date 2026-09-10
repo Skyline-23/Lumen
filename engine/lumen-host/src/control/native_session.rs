@@ -3491,6 +3491,7 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoProfile::Av1Main => PlatformVideoProfile::Av1Main,
             NativeVideoProfile::ShadowVcSpatialBase16 => PlatformVideoProfile::ShadowVcSpatialBase16,
             NativeVideoProfile::ShadowVcRegionalPredictor8 => PlatformVideoProfile::ShadowVcRegionalPredictor8,
+            NativeVideoProfile::ShadowVcLuma16 => PlatformVideoProfile::ShadowVcLuma16,
             NativeVideoProfile::Unspecified => return None,
         },
         chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)
