@@ -92,7 +92,7 @@ let project = Project(
         developmentRegion: "en",
         disableSynthesizedResourceAccessors: true
     ),
-    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("064ee7701ee0a9a8281cec390a36425659164f09"))],
+    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("36ec91f8cd24c3ea97d5c8219a8f2322e65810e0"))],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
