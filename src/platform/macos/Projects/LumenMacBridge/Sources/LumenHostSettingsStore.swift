@@ -365,6 +365,19 @@ public actor LumenHostSettingsStore {
         try snapshot().workspacePolicy
     }
 
+    nonisolated static func workerWorkspacePolicy(
+        arguments: [String]
+    ) throws -> LumenMacWorkspacePolicy? {
+        let prefix = "workspace_policy="
+        let values = arguments.filter { $0.hasPrefix(prefix) }
+        guard !values.isEmpty else { return nil }
+        guard values.count == 1,
+              let policy = workspacePolicy(String(values[0].dropFirst(prefix.count))) else {
+            throw LumenHostSettingsError.invalidValue
+        }
+        return policy
+    }
+
     public func isSystemAuthenticationEnabled() -> Bool {
         guard let defaults = try? makeDefaults() else {
             return false

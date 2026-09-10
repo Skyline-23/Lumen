@@ -402,12 +402,14 @@ actor LumenMacWorkspaceSessionRegistry {
 
     init(
         settingsStore: LumenHostSettingsStore,
+        workspacePolicyOverride: LumenMacWorkspacePolicy? = nil,
         runtime: LumenBridgeRuntime,
         makeDisplayWorkspace: @escaping @Sendable () -> any LumenMacDisplayWorkspaceManaging,
         makeDisplayOwner: @escaping @Sendable () -> LumenMacVirtualDisplayOwner
     ) {
         resolvePolicy = {
-            try await settingsStore.workspacePolicy()
+            if let workspacePolicyOverride { return workspacePolicyOverride }
+            return try await settingsStore.workspacePolicy()
         }
         makeSession = { request, preparationFence in
             let displayOwner = makeDisplayOwner()
@@ -895,8 +897,17 @@ public final class LumenMacWorkspaceSessionFacade: NSObject, Sendable {
             fatalError("Unable to construct the Lumen host settings store")
         }
         let composition = LumenMacWorkspaceCompositionRoot.live()
+        let policyOverride: LumenMacWorkspacePolicy?
+        do {
+            policyOverride = try LumenHostSettingsStore.workerWorkspacePolicy(
+                arguments: ProcessInfo.processInfo.arguments
+            )
+        } catch {
+            fatalError("Invalid Lumen worker workspace policy")
+        }
         registry = LumenMacWorkspaceSessionRegistry(
             settingsStore: settingsStore,
+            workspacePolicyOverride: policyOverride,
             runtime: .shared,
             makeDisplayWorkspace: {
                 composition.makeDisplayWorkspace()
