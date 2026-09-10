@@ -44,7 +44,7 @@ final class LumenShadowVCCaptureTests: XCTestCase {
 
     @MainActor
     func testIndependentVirtualDisplayCoreAICapture() async throws {
-        guard #available(macOS 27, *), ProcessInfo.processInfo.environment["LUMEN_SHADOWVC_LIVE_TEST"] == "1" else {
+        guard ProcessInfo.processInfo.environment["LUMEN_SHADOWVC_LIVE_TEST"] == "1" else {
             throw XCTSkip("Enable LUMEN_SHADOWVC_LIVE_TEST for the independent virtual-display capture check")
         }
         guard CGPreflightScreenCaptureAccess() else {

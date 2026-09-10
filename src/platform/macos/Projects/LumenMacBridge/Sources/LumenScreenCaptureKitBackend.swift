@@ -202,8 +202,7 @@ struct LumenCaptureColorContract: Equatable, Sendable {
 enum LumenCaptureStreamConfigurationFactory {
     static func make(configuration: LumenMacCaptureConfiguration) -> SCStreamConfiguration {
         if configuration.chromaSubsampling == .yuv444,
-           configuration.dynamicRange == .hdr10,
-           #available(macOS 15.0, *) {
+           configuration.dynamicRange == .hdr10 {
             let result = SCStreamConfiguration(preset: .captureHDRStreamCanonicalDisplay)
             result.captureDynamicRange = .hdrCanonicalDisplay
             result.pixelFormat = kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
@@ -219,7 +218,7 @@ enum LumenCaptureStreamConfigurationFactory {
         let configuration: SCStreamConfiguration
         if !usesHDRTransport {
             configuration = SCStreamConfiguration()
-        } else if #available(macOS 15.0, *) {
+        } else {
             // This runtime forwards live frames and owns HDR10 metadata on the
             // encoded stream. The recording preset adds recording-oriented
             // preservation work that is unnecessary on this path. Keep the
@@ -231,8 +230,6 @@ enum LumenCaptureStreamConfigurationFactory {
             result.colorSpaceName = CGColorSpace.itur_2100_PQ
             result.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
             configuration = result
-        } else {
-            configuration = SCStreamConfiguration()
         }
 
         configuration.showsCursor = true

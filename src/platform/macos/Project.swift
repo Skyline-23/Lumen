@@ -8,7 +8,7 @@ let baseSettings: SettingsDictionary = [
     "CODE_SIGN_STYLE": "Automatic",
     "CODE_SIGN_IDENTITY": "Apple Development",
     "DEVELOPMENT_TEAM": "Q23JLSJCCV",
-    "MACOSX_DEPLOYMENT_TARGET": "15.0",
+    "MACOSX_DEPLOYMENT_TARGET": "27.0",
     "SWIFT_VERSION": "6.0",
     "SWIFT_STRICT_CONCURRENCY": "complete",
     "SWIFT_DEFAULT_ACTOR_ISOLATION": "nonisolated"
@@ -100,7 +100,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.enginebridge",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "Projects/LumenEngineBridge/Sources/**/*.{m}"
@@ -130,7 +130,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.macbridge",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "Projects/LumenMacBridge/Sources/**/*.{swift,m,mm}"
@@ -169,7 +169,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.hostruntimebridge",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "Projects/LumenHostRuntimeBridge/Sources/**/*.m"
@@ -200,7 +200,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.maccaptureadapter",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "Projects/LumenMacCaptureAdapter/Sources/**/*.swift"
@@ -221,7 +221,7 @@ let project = Project(
             destinations: .macOS,
             product: .framework,
             bundleId: "dev.skyline23.lumen.apparchitecture",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "Projects/LumenAppArchitecture/Sources/**/*.swift"
@@ -238,7 +238,7 @@ let project = Project(
             destinations: .macOS,
             product: .app,
             bundleId: "dev.skyline23.lumen.displaydisconnectcanary",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .extendingDefault(with: [
                 "LSUIElement": true,
                 "NSPrincipalClass": "NSApplication"
@@ -270,14 +270,14 @@ let project = Project(
             destinations: .macOS,
             product: .app,
             bundleId: "dev.skyline23.lumen.app",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .extendingDefault(
                 with: [
                     "CFBundleDisplayName": "Lumen",
                     "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                     "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                     "LSApplicationCategoryType": "public.app-category.utilities",
-                    "LSMinimumSystemVersion": "15.0",
+                    "LSMinimumSystemVersion": "27.0",
                     "INFOPLIST_KEY_NSHighResolutionCapable": "YES",
                     "LSUIElement": "NO",
                     "NSAudioCaptureUsageDescription": "Lumen needs access to system audio to stream the selected Mac display with audio.",
@@ -331,7 +331,7 @@ let project = Project(
             destinations: .macOS,
             product: .commandLineTool,
             bundleId: "dev.skyline23.lumen.slcontentstreamprobe",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "../../../tools/quality/macos_slcontentstream_runtime_probe.m"
@@ -354,7 +354,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "dev.skyline23.lumen.tuist.tests",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("27.0"),
             infoPlist: .default,
             sources: [
                 "../../../tests/tuist/macos/**/*.swift",

@@ -212,7 +212,7 @@ struct LumenProductionCaptureRuntimeFactory:
         context: LumenEncodedCaptureRuntimeContext
     ) throws -> any LumenEncodedCaptureRuntime {
         if context.configuration.codec == .shadowVC {
-            guard #available(macOS 27, *), context.configuration.videoProfile == .shadowVCRegionalPredictor8 || shadowVCModelDirectory != nil else {
+            guard context.configuration.videoProfile == .shadowVCRegionalPredictor8 || shadowVCModelDirectory != nil else {
                 throw LumenExactCaptureError.invalidFormat("ShadowVC requires macOS 27 and its negotiated model")
             }
             return LumenShadowVCCaptureRuntime(context: context, modelDirectory: shadowVCModelDirectory)

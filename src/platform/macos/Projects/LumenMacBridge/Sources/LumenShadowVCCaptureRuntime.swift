@@ -5,7 +5,6 @@ import ScreenCaptureKit
 import ShadowVCRuntime
 import Synchronization
 
-@available(macOS 27, *)
 actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private let context: LumenEncodedCaptureRuntimeContext
     private let modelDirectory: URL?

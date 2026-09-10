@@ -144,12 +144,6 @@ final class LumenMacBridgeConfigurationTests: XCTestCase {
     }
 
     func testHDRCaptureUsesCanonicalLiveStreamOutputContract() throws {
-        guard #available(macOS 15.0, *) else {
-            throw XCTSkip(
-                "Canonical HDR ScreenCaptureKit streaming requires macOS 15"
-            )
-        }
-
         let configuration = LumenCaptureStreamConfigurationFactory.make(
             usesHDRTransport: true
         )
