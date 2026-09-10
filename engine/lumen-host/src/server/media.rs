@@ -57,6 +57,14 @@ fn predictive_video_queue_reserve_bytes(
     // (subject to the existing deadline) and preserve the audio reserve.
     let wire_window_bytes = (u64::from(wire_budget_kbps)
         * u64::from(maximum_object_delay_us) / 16_000) as usize;
+    // FC3 output is content-dependent, not controlled by its negotiated bitrate
+    // ceiling. Keep only one previous object while admitting a successor, so
+    // the large ceiling cannot turn a brief stall into several stale frames.
+    let wire_window_bytes = if profile == crate::PlatformVideoProfile::ShadowVcLuma16 {
+        wire_window_bytes.min(object_bytes.saturating_mul(2))
+    } else {
+        wire_window_bytes
+    };
     let capacity = wire_window_bytes.max(object_bytes)
         .saturating_add(NATIVE_AUDIO_EGRESS_RESERVE_BYTES)
         .min(NATIVE_MEDIA_SEND_BUFFER_BYTES);
@@ -2807,6 +2815,52 @@ mod tests {
         assert_eq!(NATIVE_MEDIA_SEND_BUFFER_BYTES - large, 900_000);
         assert_eq!(predictive_video_queue_reserve_bytes(HevcMain, 500_000, 16_000, 400_000), NATIVE_AUDIO_EGRESS_RESERVE_BYTES);
         assert_eq!(predictive_video_queue_reserve_bytes(ShadowVcRegionalPredictor8, u32::MAX, u32::MAX, usize::MAX), NATIVE_AUDIO_EGRESS_RESERVE_BYTES);
+    }
+
+    #[tokio::test]
+    async fn fc3_admission_bounds_queued_predecessors_before_committing_the_next() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use super::{predictive_video_queue_reserve_bytes, send_wire_paced_video_datagram_batch,
+            wait_for_datagram_queue_capacity, VideoWireRatePacer, NATIVE_MEDIA_SEND_BUFFER_BYTES};
+        let object_bytes = 150_000;
+        let queued = Rc::new(Cell::new(2 * object_bytes));
+        let peak = Rc::new(Cell::new(2 * object_bytes));
+        let barrier_queue = Rc::clone(&queued);
+        let space_queue = Rc::clone(&queued);
+        let send_queue = Rc::clone(&queued);
+        let send_peak = Rc::clone(&peak);
+        let gate = tokio::sync::Mutex::new(());
+        let pacer = std::sync::Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+        let report = send_wire_paced_video_datagram_batch(
+            vec![vec![0; 1_200]; object_bytes / 1_200],
+            NATIVE_MEDIA_SEND_BUFFER_BYTES,
+            predictive_video_queue_reserve_bytes(crate::PlatformVideoProfile::ShadowVcLuma16,
+                700_000, 16_668, object_bytes),
+            Instant::now() + Duration::from_secs(1), &gate, &pacer, 7, 1, 700_000, 1_200,
+            move |required, deadline| {
+                let space = Rc::clone(&barrier_queue);
+                let drain = Rc::clone(&barrier_queue);
+                async move {
+                    wait_for_datagram_queue_capacity(NATIVE_MEDIA_SEND_BUFFER_BYTES, required, deadline,
+                        move || NATIVE_MEDIA_SEND_BUFFER_BYTES - space.get(),
+                        move |_| {
+                            drain.set(0);
+                            async { Ok(()) }
+                        }).await
+                }
+            },
+            move || NATIVE_MEDIA_SEND_BUFFER_BYTES - space_queue.get(),
+            move |_, bytes, _| {
+                send_queue.set(send_queue.get() + bytes.len());
+                send_peak.set(send_peak.get().max(send_queue.get()));
+                async { super::DatagramSendOutcome::Sent }
+            },
+            || Ok(()),
+        ).await;
+        assert_eq!(report.status, super::DatagramBatchStatus::Complete);
+        assert_eq!(report.sent_datagrams, object_bytes / 1_200);
+        assert_eq!(peak.get(), 2 * object_bytes, "queue must not retain more than one predecessor when committing another FC3 reference");
     }
     use super::super::packet_arrival::{
         PacketArrivalFeedbackError, PacketArrivalHistory, PacketIdentity,
