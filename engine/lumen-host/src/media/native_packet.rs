@@ -22,6 +22,16 @@ pub struct NativeMediaPacketizerConfig {
 pub struct NativePacketizedUnit {
     pub datagrams: Vec<Vec<u8>>,
     pub next_sequence: u32,
+    pub sequence_reservation: NativePacketSequenceReservation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativePacketSequenceReservation {
+    kind: NativeMediaKind,
+    generation_id: u32,
+    revision: u64,
+    first: u32,
+    next: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +51,7 @@ struct CachedFecCodec {
 pub struct NativeMediaPacketizer {
     config: NativeMediaPacketizerConfig,
     next_sequence: u32,
+    sequence_revision: u64,
     full_fec_codec: Option<CachedFecCodec>,
     tail_fec_codec: Option<CachedFecCodec>,
     #[cfg(test)]
@@ -57,6 +68,7 @@ impl NativeMediaPacketizer {
         Ok(Self {
             config,
             next_sequence: initial_sequence,
+            sequence_revision: 0,
             full_fec_codec: None,
             tail_fec_codec: None,
             #[cfg(test)]
@@ -74,6 +86,25 @@ impl NativeMediaPacketizer {
             return Err("native media packetizer configuration is invalid".to_owned());
         }
         self.config.maximum_datagram_payload = maximum_datagram_payload;
+        Ok(())
+    }
+
+    /// Return sequence numbers only when the entire current reservation stayed
+    /// off the wire. A partial send must retain its range, even after repair.
+    pub fn discard_unsent_sequence(
+        &mut self,
+        reservation: NativePacketSequenceReservation,
+        sent_datagrams: usize,
+    ) -> Result<(), String> {
+        if sent_datagrams != 0
+            || reservation.kind != self.config.kind
+            || reservation.generation_id != self.config.generation_id
+            || reservation.revision != self.sequence_revision
+            || reservation.next != self.next_sequence
+        {
+            return Err("native media sequence reservation is sent or no longer current".to_owned());
+        }
+        self.next_sequence = reservation.first;
         Ok(())
     }
 
@@ -206,6 +237,8 @@ impl NativeMediaPacketizer {
                     .map_err(|_| "native media packet count overflowed".to_owned())?,
             )
             .ok_or_else(|| "native media datagram sequence exhausted".to_owned())?;
+        let sequence_revision = self.sequence_revision.checked_add(1)
+            .ok_or_else(|| "native media sequence reservation exhausted".to_owned())?;
 
         let mut datagrams = Vec::with_capacity(plan.total_shards);
         let uses_compact_audio_shard = self.config.kind == NativeMediaKind::Audio
@@ -303,10 +336,19 @@ impl NativeMediaPacketizer {
             datagrams.iter().map(Vec::len).sum::<usize>(),
             expected_wire_bytes
         );
+        let sequence_reservation = NativePacketSequenceReservation {
+            kind: self.config.kind,
+            generation_id: self.config.generation_id,
+            revision: sequence_revision,
+            first: self.next_sequence,
+            next: next_sequence,
+        };
         self.next_sequence = next_sequence;
+        self.sequence_revision = sequence_revision;
         Ok(NativePacketizedUnit {
             datagrams,
             next_sequence,
+            sequence_reservation,
         })
     }
 }

@@ -19,7 +19,9 @@ use crate::control::{
 use crate::media::native_motion::{
     NativeMotionDatagramError, NativeMotionIdentity, NativeMotionReceiver,
 };
-use crate::media::native_packet::{NativeMediaPacketizer, NativeMediaPacketizerConfig};
+use crate::media::native_packet::{
+    NativeMediaPacketizer, NativeMediaPacketizerConfig, NativePacketSequenceReservation,
+};
 use crate::media::native_video::{
     NativeVideoBitstreamNormalizer, NativeVideoConfiguration, NormalizedNativeVideoFrame,
 };
@@ -1744,6 +1746,16 @@ fn retain_independent_video_repair(
 }
 
 impl VideoSenderState {
+    fn reject_unsent_packetized_frame(
+        &mut self,
+        reservation: NativePacketSequenceReservation,
+        sent_datagrams: usize,
+    ) -> Result<(), String> {
+        self.packetizer.as_mut().ok_or_else(|| "no video packetizer".to_owned())?
+            .discard_unsent_sequence(reservation, sent_datagrams)?;
+        self.reject_unsent_prepared_frame()
+    }
+
     fn reject_unsent_prepared_frame(&mut self) -> Result<(), String> {
         let receipt = self.pending_receipt.take().ok_or_else(|| "no prepared frame to reject".to_owned())?;
         receipt.resolve(false)?;
@@ -2572,7 +2584,9 @@ async fn poll_and_send_video(
                 delivery.session_epoch, delivery.media_park_revision,
                 delivery.media_delivery_generation, Some(generation_id)));
             if current {
-                if let Err(message) = sender.reject_unsent_prepared_frame() {
+                if let Err(message) = sender.reject_unsent_packetized_frame(
+                    packetized.sequence_reservation, report.sent_datagrams,
+                ) {
                     return MediaAttempt::Terminal(video_capture_failure("prepared-frame-reject-failed", message));
                 }
             }
@@ -2749,6 +2763,19 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn prepared_reference_commits_only_after_first_send_and_never_rolls_back_partial_send() {
         for scenario in 0..4 {
+            let mut packetizer = crate::media::native_packet::NativeMediaPacketizer::new(
+                crate::media::native_packet::NativeMediaPacketizerConfig {
+                    kind: lumen_engine::NativeMediaKind::VideoDelta,
+                    maximum_datagram_payload: 1_200,
+                    generation_id: 3,
+                }, 100,
+            ).unwrap();
+            let frame = crate::PlatformEncodedVideoFrame {
+                payload: vec![7; 3_000], decoder_configuration_record: None,
+                presentation_time_90khz: 1_000, key_frame: false,
+                requires_bootstrap_acknowledgement: false, repair_keyframe: false,
+            };
+            let packetized = packetizer.packetize_video_delta(&frame, 11, 0).unwrap();
             let platform = Arc::new(PreparedFramePlatform::default());
             let receipt = Arc::new(super::PreparedVideoReceipt { platform: platform.clone(),
                 session_epoch: 9, source_frame_id: 7, resolved: std::sync::atomic::AtomicBool::new(false) });
@@ -2756,7 +2783,7 @@ mod tests {
             let gate = tokio::sync::Mutex::new(());
             let mut attempts = 0;
             let report = send_wire_paced_video_datagram_batch(
-                vec![vec![0; 1_200]; 3], 16 * 1_200, 0,
+                packetized.datagrams, 16 * 1_200, 0,
                 Instant::now() + Duration::from_millis(500), &gate, &pacer, 9, 0,
                 1_000_000, 1_200,
                 move |_, _| async move { if scenario == 0 { Err(DatagramDeadlineElapsed) } else { Ok(Duration::ZERO) } },
@@ -2773,14 +2800,28 @@ mod tests {
                 || receipt.resolve(true),
             ).await;
             if scenario < 2 {
-                let mut sender = VideoSenderState { frame_id: 11, pending_receipt: Some(receipt.clone()), ..Default::default() };
-                sender.reject_unsent_prepared_frame().unwrap();
+                let mut sender = VideoSenderState { frame_id: 11, packetizer: Some(packetizer),
+                    pending_receipt: Some(receipt.clone()), ..Default::default() };
+                sender.reject_unsent_packetized_frame(
+                    packetized.sequence_reservation, report.sent_datagrams,
+                ).unwrap();
                 assert_eq!(sender.frame_id, 11, "zero-wire rejection consumed a receiver object ID");
+                let next = sender.packetizer.as_mut().unwrap()
+                    .packetize_video_delta(&frame, sender.frame_id, 0).unwrap();
+                assert_eq!(lumen_engine::decode_native_media_datagram(&next.datagrams[0]).unwrap()
+                    .header.datagram_sequence, 100, "unsent data became a false receiver sequence gap");
                 assert!(!sender.repair_required);
                 assert_eq!(report.sent_datagrams, 0);
             } else if scenario == 2 {
                 assert!(matches!(report.status, DatagramBatchStatus::Terminal(_)));
                 assert_eq!(report.sent_datagrams, 1);
+                assert!(packetizer.discard_unsent_sequence(
+                    packetized.sequence_reservation, report.sent_datagrams,
+                ).is_err());
+                let next = packetizer.packetize_video_delta(&frame, 12, 0).unwrap();
+                assert_eq!(lumen_engine::decode_native_media_datagram(&next.datagrams[0]).unwrap()
+                    .header.datagram_sequence, packetized.next_sequence,
+                    "partial send reused a published sequence range");
             } else {
                 assert_eq!(report.status, DatagramBatchStatus::Complete);
                 assert_eq!(report.sent_datagrams, 3);

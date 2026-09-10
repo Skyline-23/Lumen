@@ -43,6 +43,35 @@ fn video_frame(payload_bytes: usize) -> PlatformEncodedVideoFrame {
 }
 
 #[test]
+fn unsent_sequence_reservations_do_not_create_loss_or_rewind_later_work() {
+    let mut packetizer = NativeMediaPacketizer::new(video_config(1_200), 0).unwrap();
+    let frame = video_frame(130_000);
+    let first = packetizer.packetize_video_delta(&frame, 1, 20).unwrap();
+    let rejected = packetizer.packetize_video_delta(&frame, 2, 20).unwrap();
+    packetizer.discard_unsent_sequence(rejected.sequence_reservation, 0).unwrap();
+    // Same-size retry reuses the range but owns a new reservation. An old
+    // rejection must not roll that retry back (including the same-end ABA case).
+    let retry = packetizer.packetize_video_delta(&frame, 2, 20).unwrap();
+    assert_eq!(decode_native_media_datagram(&retry.datagrams[0]).unwrap()
+        .header.datagram_sequence, first.next_sequence);
+    assert!(packetizer.discard_unsent_sequence(rejected.sequence_reservation, 0).is_err());
+    assert!(packetizer.discard_unsent_sequence(first.sequence_reservation, 0).is_err());
+    assert!(packetizer.discard_unsent_sequence(retry.sequence_reservation, 1).is_err());
+    let mut next_generation = NativeMediaPacketizer::new(
+        NativeMediaPacketizerConfig { generation_id: 8, ..video_config(1_200) },
+        first.next_sequence,
+    ).unwrap();
+    let foreign = next_generation.packetize_video_delta(&frame, 2, 20).unwrap();
+    assert!(packetizer.discard_unsent_sequence(foreign.sequence_reservation, 0).is_err());
+    let next = packetizer.packetize_video_delta(&frame, 3, 20).unwrap();
+    assert_eq!(decode_native_media_datagram(&next.datagrams[0]).unwrap()
+        .header.datagram_sequence, retry.next_sequence);
+    let expected = next.next_sequence as usize;
+    let received = first.datagrams.len() + retry.datagrams.len() + next.datagrams.len();
+    assert_eq!(expected, received, "zero wire loss must not inflate expected feedback datagrams");
+}
+
+#[test]
 fn exact_wire_plan_matches_adversarial_padding_header_and_fec_boundaries() {
     const MTU: usize = 1_200;
     const PARITY: u16 = 30;
