@@ -34,9 +34,9 @@ actor LumenMacVirtualDisplayOwner {
         )
         let owner = LumenRetainedVirtualDisplayReference(display: display)
         do {
-            if configuration.highDensity {
-                try await selectPublishedHiDPIMode(display)
-            }
+            // WindowServer may initially choose a lower-resolution mode even
+            // for a 1x display. Select the exact logical/backing pair in both cases.
+            try await selectPublishedMode(display)
             try await ownershipRegistry.register(owner, forKey: identity.id)
         } catch {
             _ = LumenMacVirtualDisplay.removeRegisteredDisplay(
@@ -63,10 +63,7 @@ actor LumenMacVirtualDisplayOwner {
             logicalHeight: geometry.logicalHeight,
             refreshRate: refreshRate
         )
-        if display.backingWidth != display.logicalWidth ||
-            display.backingHeight != display.logicalHeight {
-            try await selectPublishedHiDPIMode(display)
-        }
+        try await selectPublishedMode(display)
     }
 
     func reconfigure(
@@ -237,7 +234,7 @@ actor LumenMacVirtualDisplayOwner {
         return LumenRetainedVirtualDisplayReference(display: display)
     }
 
-    private func selectPublishedHiDPIMode(
+    private func selectPublishedMode(
         _ display: LumenMacVirtualDisplay
     ) async throws {
         let deadline = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
@@ -245,7 +242,7 @@ actor LumenMacVirtualDisplayOwner {
         while true {
             try Task.checkCancellation()
             do {
-                try display.selectPublishedHiDPIMode()
+                try display.selectPublishedMode()
                 return
             } catch {
                 lastError = error

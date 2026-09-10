@@ -143,8 +143,8 @@ NS_SWIFT_NAME(LumenMacVirtualDisplay)
              logicalHeight:(uint32_t)logicalHeight
                refreshRate:(double)refreshRate
                       error:(NSError **)error;
-- (BOOL)selectPublishedHiDPIModeWithError:(NSError **)error
-    NS_SWIFT_NAME(selectPublishedHiDPIMode());
+- (BOOL)selectPublishedModeWithError:(NSError **)error
+    NS_SWIFT_NAME(selectPublishedMode());
 - (void)destroy;
 
 - (instancetype)init NS_UNAVAILABLE;

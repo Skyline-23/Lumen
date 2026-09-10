@@ -46,7 +46,9 @@ extension LumenMacWorkspaceSession {
     ) async throws -> LumenMacWorkspaceActivationOutcome {
         let result = try await executor.execute(command)
         try await coordinator.complete(command, result: result)
-        await executor.positionPointerOnSessionDisplay()
+        if effectivePolicy != .coexist {
+            await executor.positionPointerOnSessionDisplay()
+        }
         activationCommand = nil
         phase = .active
         guard effectivePolicy == .isolatedWorkspace else {

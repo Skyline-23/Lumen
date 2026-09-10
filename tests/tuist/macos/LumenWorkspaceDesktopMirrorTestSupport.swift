@@ -326,5 +326,5 @@ private func completeDesktopMirrorActivation(
         context.request.displayMode
     )
     XCTAssertTrue(events.contains(.firstFrameBarrier))
-    XCTAssertTrue(events.contains(.positionPointer(89, geometry)))
+    XCTAssertEqual(events.contains(.positionPointer(89, geometry)), policy == .isolatedWorkspace)
 }

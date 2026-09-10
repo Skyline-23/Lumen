@@ -262,7 +262,7 @@ static BOOL LumenDisplayModeMatches(
          refreshMatches;
 }
 
-static BOOL LumenSelectPublishedHiDPIMode(
+static BOOL LumenSelectPublishedMode(
   CGDirectDisplayID displayID,
   uint32_t logicalWidth,
   uint32_t logicalHeight,
@@ -323,7 +323,7 @@ static BOOL LumenSelectPublishedHiDPIMode(
       error,
       LumenMacVirtualDisplayErrorModeSelectionFailed,
       [NSString stringWithFormat:
-        @"The published HiDPI mode %ux%u (pixels %ux%u) @ %.0fHz was not available. Observed modes: %@",
+        @"The published mode %ux%u (pixels %ux%u) @ %.0fHz was not available. Observed modes: %@",
         logicalWidth,
         logicalHeight,
         backingWidth,
@@ -342,7 +342,7 @@ static BOOL LumenSelectPublishedHiDPIMode(
       error,
       LumenMacVirtualDisplayErrorModeSelectionFailed,
       [NSString stringWithFormat:
-        @"Failed to select the published HiDPI display mode (%d).",
+        @"Failed to select the published display mode (%d).",
         result]
     );
     return NO;
@@ -1171,23 +1171,23 @@ static void LumenConfigureHDRDisplayInfo(
   return YES;
 }
 
-- (BOOL)selectPublishedHiDPIModeWithError:(NSError **)error {
+- (BOOL)selectPublishedModeWithError:(NSError **)error {
   if (![NSThread isMainThread]) {
     __block BOOL selected = NO;
     __block NSError *mainThreadError = nil;
     dispatch_sync(dispatch_get_main_queue(), ^{
-      selected = [self selectPublishedHiDPIModeWithError:&mainThreadError];
+      selected = [self selectPublishedModeWithError:&mainThreadError];
     });
     if (!selected && error != NULL) {
       *error = mainThreadError;
     }
     return selected;
   }
-  if (_display == nil || _displayID == 0 || !_highDensity) {
+  if (_display == nil || _displayID == 0) {
     LumenAssignVirtualDisplayError(
       error,
       LumenMacVirtualDisplayErrorInvalidConfiguration,
-      @"The retained HiDPI display is unavailable for mode selection."
+      @"The retained display is unavailable for mode selection."
     );
     return NO;
   }
@@ -1206,7 +1206,7 @@ static void LumenConfigureHDRDisplayInfo(
   if (currentModeMatches) {
     return YES;
   }
-  return LumenSelectPublishedHiDPIMode(
+  return LumenSelectPublishedMode(
     _displayID,
     _logicalWidth,
     _logicalHeight,

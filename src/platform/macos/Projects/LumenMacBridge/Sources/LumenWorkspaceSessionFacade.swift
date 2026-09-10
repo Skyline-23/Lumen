@@ -126,25 +126,19 @@ struct LumenMacWorkspaceSessionRequestSnapshot: Sendable {
             ),
             dynamicRangeTransport: dynamicRangeTransport
         )
-        let displayMode = desktopMirrorSourceDisplayID == 0
-            ? LumenMacDisplayModeRequest(
+        // Desktop sessions own an independent output. A legacy physical-display
+        // hint must not mirror the user's desktop or inflate the requested mode.
+        let displayMode = LumenMacDisplayModeRequest(
                 width: width,
                 height: height,
                 scalePercent: scalePercent,
                 dimensionsAreLogical: dimensionsAreLogical,
                 highDensity: highDensity
             )
-            : LumenMacDesktopMirrorDisplayModeResolver.resolve(
-                captureWidth: width,
-                captureHeight: height,
-                sinkMode: sinkRequest.mode
-            )
         return LumenMacWorkspaceSessionRequest(
             displayKey: displayKey,
             policy: policy,
-            contentSource: desktopMirrorSourceDisplayID == 0
-                ? .targetWindows
-                : .desktopMirror(sourceDisplayID: desktopMirrorSourceDisplayID),
+            contentSource: .targetWindows,
             displayMode: displayMode,
             displayName: displayName,
             refreshRate: refreshRate,

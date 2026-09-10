@@ -71,11 +71,11 @@ struct LumenVirtualDisplayLifecycleContractTests {
             configure.range(of: "try display.updateLogicalWidth(")
         )
         let select = try #require(
-            configure.range(of: "try await selectPublishedHiDPIMode(display)")
+            configure.range(of: "try await selectPublishedMode(display)")
         )
 
         #expect(update.lowerBound < select.lowerBound)
-        #expect(configure.contains("display.backingWidth != display.logicalWidth"))
+        #expect(!configure.contains("display.backingWidth != display.logicalWidth"))
     }
 
     @Test("Private virtual display lifecycle keeps callbacks off the worker main queue")

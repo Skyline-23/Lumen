@@ -117,7 +117,7 @@ final class LumenNativeVirtualDisplayTests: XCTestCase {
         let deadline = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
         while true {
             do {
-                try display.selectPublishedHiDPIMode()
+                try display.selectPublishedMode()
                 break
             } catch {
                 let now = DispatchTime.now().uptimeNanoseconds
