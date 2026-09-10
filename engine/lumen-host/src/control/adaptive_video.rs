@@ -67,9 +67,6 @@ pub(crate) struct AdaptiveVideoDeliveryController {
     quality_floor_encoder_kbps: u32,
     refresh_millihz: u32,
     maximum_datagram_payload: u32,
-    // Fixed-model codecs do not implement platform bitrate or admission updates.
-    // Retain their initial encoder configuration while adapting transport only.
-    fixed_encoder_bitrate_kbps: Option<u32>,
     // Video decoder pressure controls admission work, never B_net, FEC, or quality.
     admission_divisor: u8,
     fec_percentage: u16,
@@ -161,7 +158,6 @@ impl AdaptiveVideoDeliveryController {
             quality_floor_encoder_kbps,
             refresh_millihz,
             maximum_datagram_payload,
-            fixed_encoder_bitrate_kbps: None,
             admission_divisor: 1,
             fec_percentage: initial_fec_percentage,
             maximum_decoder_queue_depth: maximum_decoder_queue_depth.max(1),
@@ -172,12 +168,6 @@ impl AdaptiveVideoDeliveryController {
             pipeline_pressure_armed: true,
             keyframe_wire_rate_requirement_kbps: None,
         }
-    }
-
-    pub(crate) fn with_fixed_encoder_policy(mut self) -> Self {
-        self.fixed_encoder_bitrate_kbps = Some(self.snapshot().encoder_bitrate_kbps);
-        self.admission_divisor = 1;
-        self
     }
 
     #[cfg(test)]
@@ -352,8 +342,7 @@ impl AdaptiveVideoDeliveryController {
                     .pipeline_pressure_windows
                     .saturating_add(1)
                     .min(Self::PIPELINE_PRESSURE_WINDOWS_BEFORE_REDUCTION);
-                if self.fixed_encoder_bitrate_kbps.is_none()
-                    && self.pipeline_pressure_armed
+                if self.pipeline_pressure_armed
                     && self.pipeline_pressure_windows
                         >= Self::PIPELINE_PRESSURE_WINDOWS_BEFORE_REDUCTION
                 {
@@ -516,16 +505,14 @@ impl AdaptiveVideoDeliveryController {
     ) -> AdaptiveVideoDecision {
         AdaptiveVideoDecision {
             wire_budget_kbps: self.wire_budget_kbps,
-            encoder_bitrate_kbps: self.fixed_encoder_bitrate_kbps.unwrap_or_else(|| {
-                maximum_video_encoder_bitrate_kbps_for_wire_budget(
-                    self.wire_budget_kbps,
-                    self.refresh_millihz,
-                    self.maximum_datagram_payload,
-                    self.fec_percentage,
-                )
-                .unwrap_or(self.quality_floor_encoder_kbps)
-                .max(self.quality_floor_encoder_kbps)
-            }),
+            encoder_bitrate_kbps: maximum_video_encoder_bitrate_kbps_for_wire_budget(
+                self.wire_budget_kbps,
+                self.refresh_millihz,
+                self.maximum_datagram_payload,
+                self.fec_percentage,
+            )
+            .unwrap_or(self.quality_floor_encoder_kbps)
+            .max(self.quality_floor_encoder_kbps),
             fec_percentage: self.fec_percentage,
             admission_divisor: self.admission_divisor,
             congestion_source,
@@ -537,38 +524,6 @@ impl AdaptiveVideoDeliveryController {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fixed_model_policy_adapts_transport_without_requesting_encoder_changes() {
-        let mut controller = AdaptiveVideoDeliveryController::new(100_000, 80_000, 20, 3)
-            .with_fixed_encoder_policy();
-        let initial = controller.snapshot();
-        for _ in 0..4 {
-            let decision = controller.observe(MediaFeedbackSample {
-                unrecoverable_objects: 1,
-                decoder_submissions: 100,
-                decoder_drops: 10,
-                ..clean(FeedbackStream::Video)
-            });
-            assert_eq!(decision.encoder_bitrate_kbps, initial.encoder_bitrate_kbps);
-            assert_eq!(decision.admission_divisor, 1);
-            assert_eq!(decision.fec_percentage, 30);
-            assert!(decision.wire_budget_kbps < initial.wire_budget_kbps);
-        }
-        for _ in 0..32 {
-            let decision = controller.observe(clean(FeedbackStream::Video));
-            assert_eq!(decision.encoder_bitrate_kbps, initial.encoder_bitrate_kbps);
-            assert_eq!(decision.admission_divisor, 1);
-            assert!(decision.wire_budget_kbps <= 100_000);
-        }
-        assert_eq!(controller.snapshot().fec_percentage, 25);
-        controller.require_keyframe_wire_rate_kbps(95_000);
-        assert!(controller.snapshot().wire_budget_kbps >= 95_000);
-        assert_eq!(
-            controller.snapshot().encoder_bitrate_kbps,
-            initial.encoder_bitrate_kbps
-        );
-    }
 
     fn clean(stream: FeedbackStream) -> MediaFeedbackSample {
         MediaFeedbackSample {
