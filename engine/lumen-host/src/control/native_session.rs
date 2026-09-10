@@ -1951,13 +1951,17 @@ impl ControlRouter {
         let Some(pending) = self.native.pending.as_ref() else {
             return Err("native session has not been negotiated".to_owned());
         };
-        // FC4's reversible integer reference has no accumulated reconstruction
-        // drift. Gaps/CRC failures already request acknowledged independent
-        // repair. Periodic refresh would stall healthy capture for the large
-        // reliable bootstrap and its acknowledgement without improving quality.
+        // These codecs rebuild canonical reference state from the current
+        // integer symbols. Their temporal prior changes entropy cost, not image
+        // reconstruction. Explicit gap/CRC recovery remains acknowledged; a
+        // periodic bootstrap only pauses healthy capture for another ACK.
         if pending.plan.selected_video_capability.as_ref()
             .and_then(|capability| capability.format.as_ref())
-            .is_some_and(|format| format.profile == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32)
+            .is_some_and(|format| {
+                format.profile == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32
+                    || (format.profile == NativeVideoProfile::ShadowVcLuma16 as i32
+                        && pending.plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY != 0)
+            })
         {
             return Ok(false);
         }
@@ -3700,6 +3704,38 @@ fn native_negotiation_error(request_id: u64, error: NativeSessionError) -> HostC
 #[cfg(test)]
 mod periodic_idr_tests {
     use super::*;
+
+    #[test]
+    fn fc3_skips_periodic_refresh_but_preserves_explicit_repair_and_other_codec_policy() {
+        use crate::control::tests::{configured_native_router, RecordingPlatformSessionControl};
+        for (profile, reference_recovery, skips_periodic) in [
+            (NativeVideoProfile::ShadowVcLuma16, true, true),
+            (NativeVideoProfile::ShadowVcLuma16, false, false),
+            (NativeVideoProfile::ShadowVcRegionalPredictor8, false, true),
+            (NativeVideoProfile::HevcMain, false, false),
+        ] {
+            let platform = Arc::new(RecordingPlatformSessionControl::default());
+            let (_root, mut router, context, _) = configured_native_router(platform.clone());
+            let pending = router.native.pending.as_mut().unwrap();
+            let format = pending.plan.selected_video_capability.as_mut().unwrap().format.as_mut().unwrap();
+            format.profile = profile as i32;
+            if profile != NativeVideoProfile::HevcMain {
+                format.codec = NativeVideoCodec::ShadowVc as i32;
+                format.bit_depth = 10;
+            }
+            if reference_recovery {
+                pending.plan.media_capabilities |= NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+            }
+            pending.acknowledged_generation_id = Some(1);
+            pending.periodic_idr.next_deadline = Some(Instant::now() - PERIODIC_IDR_INTERVAL);
+            assert_eq!(router.maybe_request_native_video_periodic(context.session_epoch, false).unwrap(), !skips_periodic);
+            if skips_periodic {
+                assert!(!platform.control_events().iter().any(|(_, event)| matches!(event, crate::PlatformControlEvent::RequestPeriodicIdrFrame)));
+                assert!(router.request_native_video_repair(context.session_epoch, NativeVideoRepairSource::IncompleteTransport).unwrap());
+                assert!(platform.control_events().iter().any(|(_, event)| matches!(event, crate::PlatformControlEvent::RequestIdrFrame)));
+            }
+        }
+    }
 
     #[test]
     fn periodic_deadline_has_exact_999ms_and_1000ms_boundary() {
