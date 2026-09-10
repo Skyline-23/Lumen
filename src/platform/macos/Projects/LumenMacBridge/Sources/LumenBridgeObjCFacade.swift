@@ -308,6 +308,10 @@ extension LumenBridgeObjCFacade {
         runtime.resetMediaQueues()
     }
 
+    public func resolvePreparedVideoFrameSync(sessionEpoch: UInt32, frameID: UInt32, accepted: Bool) -> Bool {
+        runtime.resolvePreparedVideoFrame(sessionEpoch: sessionEpoch, frameID: frameID, accepted: accepted)
+    }
+
     public func copyAudioForwardingSnapshotSync() -> LumenBridgeAudioForwardingSnapshotBox {
         LumenBridgeAudioForwardingSnapshotBox(
             snapshot: runtime.audioForwardingSnapshot()

@@ -237,6 +237,7 @@ type ResumeVideoEncodingAfterCodecAck = unsafe extern "C" fn() -> bool;
 type SetVideoDeliveryPolicy = unsafe extern "C" fn(u32, u32, u32, u8) -> bool;
 type WakeUnchangedContentCadence = unsafe extern "C" fn(u32) -> bool;
 type ResetMediaQueues = unsafe extern "C" fn(*mut BridgeController);
+type ResolvePreparedVideoFrame = unsafe extern "C" fn(*mut BridgeController, u32, u32, bool) -> bool;
 type PrepareWorkspace = unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
 type ReconfigureWorkspace =
     unsafe extern "C" fn(MacWorkspaceSessionRequest, *mut c_char, usize) -> u32;
@@ -294,6 +295,7 @@ struct MacBridgeApi {
     set_video_delivery_policy: SetVideoDeliveryPolicy,
     wake_unchanged_content_cadence: WakeUnchangedContentCadence,
     reset_media_queues: ResetMediaQueues,
+    resolve_prepared_video_frame: ResolvePreparedVideoFrame,
     prepare_workspace: PrepareWorkspace,
     reconfigure_workspace: ReconfigureWorkspace,
     activate_workspace: ActivateWorkspace,
@@ -399,6 +401,10 @@ impl MacBridgeApi {
                 reset_media_queues: load_symbol(
                     handle,
                     b"LumenMacBridgeControllerResetMediaQueues\0",
+                )?,
+                resolve_prepared_video_frame: load_symbol(
+                    handle,
+                    b"LumenMacBridgeControllerResolvePreparedVideoFrame\0",
                 )?,
                 prepare_workspace: load_symbol(handle, b"LumenMacWorkspacePrepareSession\0")?,
                 reconfigure_workspace: load_symbol(

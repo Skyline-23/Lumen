@@ -4,6 +4,59 @@ import Foundation
 import XCTest
 
 final class LumenMacBridgeForwardingTests: XCTestCase {
+    func testPreparedReceiptSurvivesDrainAndRejectsStaleSession() async throws {
+        let forwarder = LumenVideoCaptureForwarder()
+        let sample = try Self.makeEncodedSampleBuffer(payload: Data([1]), codecType: kCMVideoCodecType_HEVC)
+        for accepted in [false, true] {
+            let receipt = LumenPreparedVideoReceipt(sessionEpoch: 9, frameID: 2)
+            XCTAssertEqual(forwarder.consume(sampleBuffer: sample, codec: .shadowVC,
+                sourceSequenceNumber: 2, sourceDisplayTime: 1, isKeyFrame: false,
+                isHDRSignaled: true, preparedReceipt: receipt), .queued)
+            XCTAssertNotNil(forwarder.popNextFrame())
+            XCTAssertFalse(forwarder.resolvePreparedFrame(sessionEpoch: 8, frameID: 2, accepted: true))
+            XCTAssertFalse(forwarder.resolvePreparedFrame(sessionEpoch: 9, frameID: 3, accepted: true))
+            XCTAssertTrue(forwarder.resolvePreparedFrame(sessionEpoch: 9, frameID: 2, accepted: accepted))
+            let result = await receipt.wait()
+            XCTAssertEqual(result, accepted)
+            XCTAssertFalse(forwarder.resolvePreparedFrame(sessionEpoch: 9, frameID: 2, accepted: !accepted))
+        }
+    }
+
+    func testPreparedRejectionDoesNotEvictTheQueuedReference() async throws {
+        let forwarder = LumenVideoCaptureForwarder()
+        forwarder.setFrameCapacity(1)
+        let sample = try Self.makeEncodedSampleBuffer(payload: Data([1]), codecType: kCMVideoCodecType_HEVC)
+        _ = forwarder.consume(sampleBuffer: sample, codec: .shadowVC, sourceSequenceNumber: 1,
+            sourceDisplayTime: 1, isKeyFrame: true, isHDRSignaled: true)
+        let receipt = LumenPreparedVideoReceipt(sessionEpoch: 9, frameID: 2)
+        XCTAssertEqual(forwarder.consume(sampleBuffer: sample, codec: .shadowVC,
+            sourceSequenceNumber: 2, sourceDisplayTime: 2, isKeyFrame: false,
+            isHDRSignaled: true, preparedReceipt: receipt), .preparedFrameRejected)
+        let accepted = await receipt.wait()
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(forwarder.popNextFrame()?.sourceSequenceNumber, 1)
+        XCTAssertEqual(forwarder.snapshot().droppedFrameCount, 1)
+    }
+
+    func testPreparedReceiptIsRejectedOnMediaResetAndCancellation() async throws {
+        let forwarder = LumenVideoCaptureForwarder()
+        let sample = try Self.makeEncodedSampleBuffer(payload: Data([1]), codecType: kCMVideoCodecType_HEVC)
+        let receipt = LumenPreparedVideoReceipt(sessionEpoch: 9, frameID: 2)
+        _ = forwarder.consume(sampleBuffer: sample, codec: .shadowVC,
+            sourceSequenceNumber: 2, sourceDisplayTime: 2, isKeyFrame: false,
+            isHDRSignaled: true, preparedReceipt: receipt)
+        _ = forwarder.popNextFrame()
+        forwarder.resetForMediaEpoch()
+        let accepted = await receipt.wait()
+        XCTAssertFalse(accepted)
+        XCTAssertFalse(forwarder.resolvePreparedFrame(sessionEpoch: 9, frameID: 2, accepted: true))
+        let cancelled = LumenPreparedVideoReceipt(sessionEpoch: 10, frameID: 1)
+        let waiter = Task { await cancelled.wait() }
+        waiter.cancel()
+        let cancelledResult = await waiter.value
+        XCTAssertFalse(cancelledResult)
+    }
+
     func testPredictiveProducerCanWaitBeforeAdvancingItsReference() throws {
         let forwarder = LumenVideoCaptureForwarder()
         forwarder.setFrameCapacity(1)

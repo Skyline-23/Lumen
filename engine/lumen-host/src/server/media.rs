@@ -539,7 +539,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Space, Send, SendFuture>(
+async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Space, Send, SendFuture, FirstPacket>(
     datagrams: Vec<Vec<u8>>,
     send_buffer_capacity: usize,
     audio_reserve_bytes: usize,
@@ -553,6 +553,7 @@ async fn send_wire_paced_video_datagram_batch<Barrier, BarrierFuture, Space, Sen
     mut wait_for_capacity: Barrier,
     mut send_buffer_space: Space,
     mut send: Send,
+    mut first_packet_sent: FirstPacket,
 ) -> DatagramBatchReport
 where
     Barrier: FnMut(usize, Instant) -> BarrierFuture,
@@ -560,6 +561,7 @@ where
     Space: FnMut() -> usize,
     Send: FnMut(DatagramBatchMode, Vec<u8>, Option<Instant>) -> SendFuture,
     SendFuture: Future<Output = DatagramSendOutcome>,
+    FirstPacket: FnMut() -> Result<(), String>,
 {
     let total_datagrams = datagrams.len();
     let total_bytes = datagrams.iter().map(Vec::len).sum::<usize>();
@@ -668,7 +670,15 @@ where
             report.send_wait_duration += send_started.elapsed();
         }
         match outcome {
-            DatagramSendOutcome::Sent => report.sent_datagrams += 1,
+            DatagramSendOutcome::Sent => {
+                report.sent_datagrams += 1;
+                if index == 0 {
+                    if let Err(error) = first_packet_sent() {
+                        report.status = DatagramBatchStatus::Terminal(error);
+                        break;
+                    }
+                }
+            }
             DatagramSendOutcome::DeadlineExceeded => {
                 report.status = if index == 0 {
                     DatagramBatchStatus::Dropped(DatagramBatchDropReason::Send)
@@ -1355,6 +1365,7 @@ struct VideoSenderState {
     packetizer: Option<NativeMediaPacketizer>,
     normalizer: Option<NativeVideoBitstreamNormalizer>,
     pending_frame: Option<NormalizedNativeVideoFrame>,
+    pending_receipt: Option<Arc<PreparedVideoReceipt>>,
     pending_since: Option<Instant>,
     repair_required: bool,
     repair_after_bootstrap: bool,
@@ -1364,6 +1375,37 @@ struct VideoSenderState {
     parked: bool,
     pending_media_park_revision: Option<u64>,
     pending_media_delivery_generation: Option<u64>,
+}
+
+/// The platform keeps one encoder transaction open until first-packet admission.
+/// Dropping a pending object on any lifecycle/error path releases it negatively.
+struct PreparedVideoReceipt {
+    platform: Arc<dyn PlatformSessionControl>,
+    session_epoch: u32,
+    source_frame_id: u32,
+    resolved: AtomicBool,
+}
+
+impl PreparedVideoReceipt {
+    fn for_frame(platform: &Arc<dyn PlatformSessionControl>, session_epoch: u32,
+                 profile: crate::PlatformVideoProfile, frame: &crate::PlatformEncodedVideoFrame) -> Option<Arc<Self>> {
+        if profile != crate::PlatformVideoProfile::ShadowVcLuma16 || frame.key_frame
+            || !frame.payload.starts_with(b"SCV3") || frame.payload.len() < 20 {
+            return None;
+        }
+        let source_frame_id = u32::from_le_bytes(frame.payload[4..8].try_into().unwrap());
+        Some(Arc::new(Self { platform: Arc::clone(platform), session_epoch, source_frame_id,
+            resolved: AtomicBool::new(false) }))
+    }
+
+    fn resolve(&self, accepted: bool) -> Result<(), String> {
+        if self.resolved.swap(true, Ordering::AcqRel) { return Ok(()); }
+        self.platform.resolve_prepared_video_frame(self.session_epoch, self.source_frame_id, accepted)
+    }
+}
+
+impl Drop for PreparedVideoReceipt {
+    fn drop(&mut self) { let _ = self.resolve(false); }
 }
 
 #[derive(Clone, Default)]
@@ -1694,9 +1736,19 @@ fn retain_independent_video_repair(
 }
 
 impl VideoSenderState {
+    fn reject_unsent_prepared_frame(&mut self) -> Result<(), String> {
+        let receipt = self.pending_receipt.take().ok_or_else(|| "no prepared frame to reject".to_owned())?;
+        receipt.resolve(false)?;
+        self.pending_frame = None;
+        self.pending_since = None;
+        // frame_id is intentionally unchanged: no receiver saw this object.
+        Ok(())
+    }
+
     fn enter_parked(&mut self) {
         self.packetizer = None;
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         self.pending_media_park_revision = None;
         self.pending_media_delivery_generation = None;
@@ -1710,6 +1762,7 @@ impl VideoSenderState {
     fn leave_parked(&mut self) {
         self.packetizer = None;
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         self.repair_required = false;
         self.repair_after_bootstrap = false;
@@ -1729,6 +1782,7 @@ impl VideoSenderState {
         // parked poll observed the boundary.
         self.packetizer = None;
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         self.repair_required = false;
         self.repair_after_bootstrap = false;
@@ -1743,6 +1797,7 @@ impl VideoSenderState {
         }
         self.packetizer = None;
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         self.repair_required = false;
         self.repair_after_bootstrap = false;
@@ -1791,6 +1846,7 @@ impl VideoSenderState {
         self.packetizer = None;
         self.normalizer = Some(NativeVideoBitstreamNormalizer::new(delivery.video_format));
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         self.repair_required = false;
         self.repair_after_bootstrap = false;
@@ -1850,6 +1906,7 @@ impl VideoSenderState {
             .checked_add(1)
             .ok_or_else(|| "video frame id exhausted".to_owned())?;
         self.pending_frame = None;
+        self.pending_receipt = None;
         self.pending_since = None;
         if repair_required
             && bootstrap_pending
@@ -1932,6 +1989,7 @@ fn finish_video_keyframe_delivery(
         .checked_add(1)
         .ok_or_else(|| "video frame id exhausted".to_owned())?;
     sender.pending_frame = None;
+    sender.pending_receipt = None;
     sender.pending_since = None;
     if classification.reason == NativeVideoBootstrapReason::Repair {
         sender.repair_required = false;
@@ -2018,6 +2076,8 @@ async fn poll_and_send_video(
                 })
             }
         };
+        let _receipt = frame.as_ref().and_then(|frame| PreparedVideoReceipt::for_frame(
+            platform, delivery.session_epoch, delivery.video_format.profile, frame));
         return if frame.is_some() {
             MediaAttempt::Dropped
         } else {
@@ -2074,6 +2134,8 @@ async fn poll_and_send_video(
                 })
             }
         };
+        let prepared_receipt = PreparedVideoReceipt::for_frame(
+            platform, delivery.session_epoch, delivery.video_format.profile, &frame);
         let periodic_request = router.lock().map_err(|_| {
             video_capture_failure(
                 "periodic-keyframe-request-failed",
@@ -2119,6 +2181,7 @@ async fn poll_and_send_video(
             }
         }
         sender.pending_frame = Some(normalized);
+        sender.pending_receipt = prepared_receipt;
         sender.pending_since = Some(Instant::now());
         sender.pending_media_park_revision = Some(delivery.media_park_revision);
         sender.pending_media_delivery_generation = Some(delivery.media_delivery_generation);
@@ -2137,6 +2200,7 @@ async fn poll_and_send_video(
     if !normalized.frame.key_frame && (sender.repair_required || delivery.repair_keyframe_requested)
     {
         sender.pending_frame = None;
+        sender.pending_receipt = None;
         sender.pending_since = None;
         return MediaAttempt::Dropped;
     }
@@ -2149,6 +2213,7 @@ async fn poll_and_send_video(
             && !normalized.frame.repair_keyframe
         {
             sender.pending_frame = None;
+            sender.pending_receipt = None;
             sender.pending_since = None;
             return MediaAttempt::Dropped;
         }
@@ -2170,10 +2235,12 @@ async fn poll_and_send_video(
             delivery.bootstrap_reason,
             delivery.bootstrap_requires_encoder_resume,
         ) {
+            let prepared = sender.pending_receipt.is_some();
             sender.pending_frame = None;
+            sender.pending_receipt = None;
             sender.pending_since = None;
-            if delivery.bootstrap_reason != Some(NativeVideoBootstrapReason::Periodic)
-                || !delivery.bootstrap_requires_encoder_resume
+            if !prepared && (delivery.bootstrap_reason != Some(NativeVideoBootstrapReason::Periodic)
+                || !delivery.bootstrap_requires_encoder_resume)
             {
                 sender.repair_after_bootstrap = true;
             }
@@ -2186,8 +2253,15 @@ async fn poll_and_send_video(
             object_deadline_exceeded(pending_since.elapsed(), delivery.maximum_object_delay_us)
         })
     {
+        if sender.pending_receipt.is_some() {
+            if let Err(message) = sender.reject_unsent_prepared_frame() {
+                return MediaAttempt::Terminal(video_capture_failure("prepared-frame-reject-failed", message));
+            }
+            return MediaAttempt::Dropped;
+        }
         let stale_frame_id = sender.frame_id;
         sender.pending_frame = None;
+        sender.pending_receipt = None;
         sender.pending_since = None;
         sender.repair_required = true;
         let repair = router
@@ -2335,6 +2409,7 @@ async fn poll_and_send_video(
     });
     if !current {
         sender.pending_frame = None;
+        sender.pending_receipt = None;
         sender.pending_since = None;
         sender.pending_media_park_revision = None;
         sender.pending_media_delivery_generation = None;
@@ -2350,6 +2425,7 @@ async fn poll_and_send_video(
         delivery.maximum_object_delay_us,
         packetized.datagrams.iter().map(Vec::len).sum(),
     );
+    let prepared_receipt = sender.pending_receipt.clone();
     let report = send_wire_paced_video_datagram_batch(
         packetized.datagrams,
         NATIVE_MEDIA_SEND_BUFFER_BYTES,
@@ -2389,6 +2465,13 @@ async fn poll_and_send_video(
                 .await
             }
         },
+        || {
+            let current = router.lock().is_ok_and(|router| router.native_media_datagram_send_is_current(
+                delivery.session_epoch, delivery.media_park_revision,
+                delivery.media_delivery_generation, Some(generation_id)));
+            if !current { return Ok(()); }
+            prepared_receipt.as_ref().map_or(Ok(()), |receipt| receipt.resolve(true))
+        },
     )
     .await;
     let delivery_complete = report.status == DatagramBatchStatus::Complete;
@@ -2414,6 +2497,15 @@ async fn poll_and_send_video(
             object_age_us,
             deadline_us,
         );
+    }
+    let still_current = router.lock().is_ok_and(|router| router.native_media_datagram_send_is_current(
+        delivery.session_epoch, delivery.media_park_revision,
+        delivery.media_delivery_generation, Some(generation_id)));
+    if !still_current {
+        sender.pending_frame = None;
+        sender.pending_receipt = None;
+        sender.pending_since = None;
+        return MediaAttempt::Dropped;
     }
     if periodic_keyframe_drop_requires_wire_pressure(
         same_generation_periodic_keyframe,
@@ -2461,6 +2553,29 @@ async fn poll_and_send_video(
                     }
                 });
             }
+        }
+    }
+    if report.sent_datagrams == 0 && !delivery_complete {
+        if prepared_receipt.is_some() {
+            // Neither codec state nor the object ID became visible. Reuse the
+            // next ID with the freshest source, without breaking the receiver's
+            // contiguous dependency chain or requesting a reliable repair.
+            let current = router.lock().is_ok_and(|router| router.native_media_datagram_send_is_current(
+                delivery.session_epoch, delivery.media_park_revision,
+                delivery.media_delivery_generation, Some(generation_id)));
+            if current {
+                if let Err(message) = sender.reject_unsent_prepared_frame() {
+                    return MediaAttempt::Terminal(video_capture_failure("prepared-frame-reject-failed", message));
+                }
+            }
+            sender.pending_frame = None;
+            sender.pending_receipt = None;
+            sender.pending_since = None;
+            return match &report.status {
+                DatagramBatchStatus::Failed(message) | DatagramBatchStatus::Terminal(message) =>
+                    MediaAttempt::Failed(video_failure("quic-datagram-send-failed", message.clone())),
+                _ => MediaAttempt::Dropped,
+            };
         }
     }
     let request_repair = match finish_video_datagram_delivery(
@@ -2611,6 +2726,74 @@ fn object_deadline_exceeded(age: Duration, maximum_object_delay_us: u32) -> bool
 
 #[cfg(test)]
 mod tests {
+    #[derive(Default)]
+    struct PreparedFramePlatform(std::sync::Mutex<Vec<(u32, u32, bool)>>);
+
+    impl crate::PlatformSessionControl for PreparedFramePlatform {
+        fn start_session(&self, _: crate::PlatformSessionPlan) -> Result<(), String> { Ok(()) }
+        fn stop_session(&self) -> Result<(), String> { Ok(()) }
+        fn resolve_prepared_video_frame(&self, epoch: u32, frame: u32, accepted: bool) -> Result<(), String> {
+            self.0.lock().unwrap().push((epoch, frame, accepted));
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepared_reference_commits_only_after_first_send_and_never_rolls_back_partial_send() {
+        for scenario in 0..4 {
+            let platform = Arc::new(PreparedFramePlatform::default());
+            let receipt = Arc::new(super::PreparedVideoReceipt { platform: platform.clone(),
+                session_epoch: 9, source_frame_id: 7, resolved: std::sync::atomic::AtomicBool::new(false) });
+            let pacer = Arc::new(tokio::sync::Mutex::new(VideoWireRatePacer::default()));
+            let gate = tokio::sync::Mutex::new(());
+            let mut attempts = 0;
+            let report = send_wire_paced_video_datagram_batch(
+                vec![vec![0; 1_200]; 3], 16 * 1_200, 0,
+                Instant::now() + Duration::from_millis(500), &gate, &pacer, 9, 0,
+                1_000_000, 1_200,
+                move |_, _| async move { if scenario == 0 { Err(DatagramDeadlineElapsed) } else { Ok(Duration::ZERO) } },
+                || 16 * 1_200,
+                move |_, _, _| {
+                    attempts += 1;
+                    let outcome = match (scenario, attempts) {
+                        (1, 1) => DatagramSendOutcome::DeadlineExceeded,
+                        (2, 2) => DatagramSendOutcome::Failed("injected partial send failure".into()),
+                        _ => DatagramSendOutcome::Sent,
+                    };
+                    async move { outcome }
+                },
+                || receipt.resolve(true),
+            ).await;
+            if scenario < 2 {
+                let mut sender = VideoSenderState { frame_id: 11, pending_receipt: Some(receipt.clone()), ..Default::default() };
+                sender.reject_unsent_prepared_frame().unwrap();
+                assert_eq!(sender.frame_id, 11, "zero-wire rejection consumed a receiver object ID");
+                assert!(!sender.repair_required);
+                assert_eq!(report.sent_datagrams, 0);
+            } else if scenario == 2 {
+                assert!(matches!(report.status, DatagramBatchStatus::Terminal(_)));
+                assert_eq!(report.sent_datagrams, 1);
+            } else {
+                assert_eq!(report.status, DatagramBatchStatus::Complete);
+                assert_eq!(report.sent_datagrams, 3);
+            }
+            drop(receipt);
+            assert_eq!(*platform.0.lock().unwrap(), vec![(9, 7, scenario >= 2)]);
+        }
+    }
+
+    #[test]
+    fn media_epoch_reset_rejects_unresolved_encoder_transaction_once() {
+        let platform = Arc::new(PreparedFramePlatform::default());
+        let mut sender = VideoSenderState { frame_id: 11,
+            pending_receipt: Some(Arc::new(super::PreparedVideoReceipt { platform: platform.clone(),
+                session_epoch: 9, source_frame_id: 7, resolved: std::sync::atomic::AtomicBool::new(false) })),
+            ..Default::default() };
+        sender.enter_parked();
+        drop(sender);
+        assert_eq!(*platform.0.lock().unwrap(), vec![(9, 7, false)]);
+    }
+
     #[test]
     fn predictive_queue_cannot_fill_the_transport_buffer_with_stale_frames() {
         use crate::PlatformVideoProfile::{HevcMain, ShadowVcRegionalPredictor8};
@@ -3232,6 +3415,7 @@ mod tests {
                 sent_by_transport.set(sent_by_transport.get() + 1);
                 async { DatagramSendOutcome::Sent }
             },
+            || Ok(()),
         )
         .await;
 
@@ -3282,6 +3466,7 @@ mod tests {
                     DatagramSendOutcome::Sent
                 }
             },
+            || Ok(()),
         )
         .await;
 
@@ -3325,6 +3510,7 @@ mod tests {
                     }
                 }
             },
+            || Ok(()),
         )
         .await;
 
@@ -3870,6 +4056,7 @@ mod tests {
                 sent_by_transport.set(sent_by_transport.get() + 1);
                 async { DatagramSendOutcome::Sent }
             },
+            || Ok(()),
         )
         .await;
 

@@ -186,7 +186,10 @@ extension LumenEncodedCaptureSession {
     ) -> LumenEncodedCaptureCallbacks {
         LumenEncodedCaptureCallbacks(
             frameHandler: { frame in
-                guard gate.isOpen() else { return }
+                guard gate.isOpen() else {
+                    frame.preparedReceipt?.resolve(accepted: false)
+                    return
+                }
                 callbacks.frameHandler(frame)
             },
             eventHandler: { event in

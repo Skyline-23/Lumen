@@ -33,16 +33,24 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         case spatial(ShadowVCEncoder)
         case regional(ShadowVC4Encoder)
         case luma16(ShadowVC3Encoder)
-        func encode(_ pixel: ShadowVCPixelBuffer, frameID: UInt32, forceKeyframe: Bool) async throws -> (bytes: Data, keyframe: Bool) {
+        func encode(_ pixel: ShadowVCPixelBuffer, frameID: UInt32, forceKeyframe: Bool) async throws -> (bytes: Data, keyframe: Bool, prepared: Bool) {
             switch self {
-            case .spatial(let encoder): return (try await encoder.encode(pixel, frameID: frameID), true)
+            case .spatial(let encoder): return (try await encoder.encode(pixel, frameID: frameID), true, false)
             case .regional(let encoder):
                 let frame = try await encoder.encode(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
-                return (frame.serialized(), frame.isKeyframe)
+                return (frame.serialized(), frame.isKeyframe, false)
             case .luma16(let encoder):
-                let packet = try await encoder.encodePacket(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
-                return (packet.data, packet.isKeyframe)
+                let packet = try await encoder.preparePacket(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
+                if packet.isKeyframe {
+                    // Reliable bootstraps already pause admission through ACK.
+                    try await encoder.resolvePreparedPacket(frameID: frameID, accepted: true)
+                }
+                return (packet.data, packet.isKeyframe, !packet.isKeyframe)
             }
+        }
+        func resolve(frameID: UInt32, accepted: Bool) async throws {
+            guard case .luma16(let encoder) = self else { return }
+            try await encoder.resolvePreparedPacket(frameID: frameID, accepted: accepted)
         }
     }
     init(context: LumenEncodedCaptureRuntimeContext, modelDirectory: URL?,
@@ -207,6 +215,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         }
         let begin = DispatchTime.now().uptimeNanoseconds
         let displayTime = LumenMachTime.ticks(for: timestamp) ?? mach_absolute_time()
+        var preparedFrameID: UInt32?
         do {
             let hdr = context.configuration.dynamicRange == .hdr10
             if hdr {
@@ -217,13 +226,19 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
                 }
             }
             guard nextFrameID < UInt32.max else { throw ShadowVCError.invalidFrame }
-            nextFrameID += 1
-            let frameID = nextFrameID
+            let frameID = nextFrameID + 1
             statistics.submittedFrameCount &+= 1
             let bootstrap = bootstrapEpoch != generation
             let requestedRepair = repair.exchange(false, ordering: .acquiringAndReleasing)
             let encoded = try await encoder.encode(.init(pixel), frameID: frameID, forceKeyframe: bootstrap || requestedRepair)
-            guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
+            preparedFrameID = encoded.prepared ? frameID : nil
+            guard generation == epoch.load(ordering: .acquiring), stream != nil else {
+                if encoded.prepared { try await encoder.resolve(frameID: frameID, accepted: false) }
+                return
+            }
+            if !encoded.prepared { nextFrameID = frameID }
+            let receipt = encoded.prepared
+                ? LumenPreparedVideoReceipt(sessionEpoch: context.configuration.sessionEpoch, frameID: frameID) : nil
             let bytes = encoded.bytes
             let predictive = context.configuration.videoProfile != .shadowVCSpatialBase16
             let subtype: FourCharCode = context.configuration.videoProfile == .shadowVCLuma16 ? 0x53435633
@@ -235,8 +250,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             // frame may evict the independent repair from a bounded host queue.
             if requiresAcknowledgement { acknowledged.store(false, ordering: .releasing) }
             bootstrapEpoch = generation
-            let latency = Double(DispatchTime.now().uptimeNanoseconds-begin)/1e6
-            totalEncodeMilliseconds += latency
+            var latency = Double(DispatchTime.now().uptimeNanoseconds-begin)/1e6
             context.callbacks.frameHandler(.init(sampleBuffer: sample, codec: .shadowVC,
                 sourceSequenceNumber: UInt64(frameID), sourceDisplayTime: displayTime,
                 outputCallbackLatencyMilliseconds: latency, isKeyFrame: encoded.keyframe,
@@ -245,9 +259,24 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
                     colorPrimaries: hdr ? kCVImageBufferColorPrimaries_ITU_R_2020 as String : nil,
                     transferFunction: hdr ? kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String : nil,
                     yCbCrMatrix: hdr ? kCVImageBufferYCbCrMatrix_ITU_R_2020 as String : nil,
-                    hasHDRDisplayMetadata: false, hasContentLightLevelInfo: false)))
+                    hasHDRDisplayMetadata: false, hasContentLightLevelInfo: false),
+                preparedReceipt: receipt))
+            // Count every produced packet, including a later zero-wire reject.
             statistics.emittedFrameCount &+= 1
             statistics.encodedByteCount &+= UInt64(bytes.count)
+            if let receipt {
+                let accepted = await receipt.wait()
+                let commitBegin = DispatchTime.now().uptimeNanoseconds
+                try await encoder.resolve(frameID: frameID, accepted: accepted)
+                latency += Double(DispatchTime.now().uptimeNanoseconds - commitBegin) / 1e6
+                preparedFrameID = nil
+                guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
+                if accepted { nextFrameID = frameID }
+                else {
+                    downstreamAdmissionDropCount &+= 1
+                }
+            }
+            totalEncodeMilliseconds += latency
             statistics.minOutputCallbackLatencyMilliseconds = min(statistics.minOutputCallbackLatencyMilliseconds ?? latency, latency)
             statistics.maxOutputCallbackLatencyMilliseconds = max(statistics.maxOutputCallbackLatencyMilliseconds ?? latency, latency)
             if statistics.emittedFrameCount == 1 || statistics.emittedFrameCount % 120 == 0
@@ -258,6 +287,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
                 try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
             }
         } catch {
+            if let preparedFrameID { try? await encoder.resolve(frameID: preparedFrameID, accepted: false) }
             guard generation == epoch.load(ordering: .acquiring), stream != nil else { return }
             statistics.processingFailureCount &+= 1; statistics.lastErrorDescription = String(describing: error)
             context.statisticsHandler(statistics)

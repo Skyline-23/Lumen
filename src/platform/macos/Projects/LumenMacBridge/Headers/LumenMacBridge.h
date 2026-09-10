@@ -571,6 +571,13 @@ void LumenMacBridgeControllerConfigureAudioForwarding(
   size_t event_capacity
 );
 
+bool LumenMacBridgeControllerResolvePreparedVideoFrame(
+  LumenMacBridgeController *controller,
+  uint32_t session_epoch,
+  uint32_t frame_id,
+  bool accepted
+);
+
 void LumenMacBridgeControllerResetMediaQueues(
   LumenMacBridgeController *controller
 );

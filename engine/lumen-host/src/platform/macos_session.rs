@@ -643,6 +643,18 @@ impl PlatformSessionControl for MacPlatformSessionControl {
         }))
     }
 
+    fn resolve_prepared_video_frame(&self, session_epoch: u32, frame_id: u32, accepted: bool) -> Result<(), String> {
+        let state = self.state.lock().map_err(|_| "macOS video state is unavailable".to_owned())?;
+        if state.plan.as_ref().map(|plan| plan.session_epoch) != Some(session_epoch) {
+            return Err("prepared video receipt belongs to a retired session".to_owned());
+        }
+        if unsafe { (self.api.resolve_prepared_video_frame)(state.controller, session_epoch, frame_id, accepted) } {
+            Ok(())
+        } else {
+            Err("prepared video receipt is missing or already resolved".to_owned())
+        }
+    }
+
     fn poll_encoded_audio(&self) -> Result<Option<PlatformEncodedAudioPacket>, String> {
         if !self.stream_audio {
             return Ok(None);

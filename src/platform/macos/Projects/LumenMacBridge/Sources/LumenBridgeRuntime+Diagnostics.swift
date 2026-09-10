@@ -50,6 +50,10 @@ extension LumenBridgeRuntime {
         audioForwarder.setEventCapacity(eventCapacity)
     }
 
+    nonisolated func resolvePreparedVideoFrame(sessionEpoch: UInt32, frameID: UInt32, accepted: Bool) -> Bool {
+        videoForwarder.resolvePreparedFrame(sessionEpoch: sessionEpoch, frameID: frameID, accepted: accepted)
+    }
+
     nonisolated func resetMediaQueuesImpl() {
         videoForwarder.resetForMediaEpoch()
         audioForwarder.resetForMediaEpoch()

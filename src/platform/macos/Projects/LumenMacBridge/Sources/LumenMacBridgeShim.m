@@ -706,6 +706,17 @@ void LumenMacBridgeControllerConfigureAudioForwarding(
                                                       eventCapacity:(NSInteger) (event_capacity)];
 }
 
+bool LumenMacBridgeControllerResolvePreparedVideoFrame(
+  LumenMacBridgeController *controller,
+  uint32_t session_epoch,
+  uint32_t frame_id,
+  bool accepted
+) {
+  if (!controller) { return false; }
+  return [LumenMacBridgeFacade(controller) resolvePreparedVideoFrameSyncWithSessionEpoch:session_epoch
+    frameID:frame_id accepted:accepted];
+}
+
 void LumenMacBridgeControllerResetMediaQueues(
   LumenMacBridgeController *controller
 ) {

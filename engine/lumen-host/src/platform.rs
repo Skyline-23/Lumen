@@ -243,6 +243,12 @@ pub trait PlatformSessionControl: Send + Sync {
         Ok(None)
     }
 
+    /// Settles one prepared predictive frame at local first-packet admission.
+    /// Rejection is valid only while zero packets from that frame were sent.
+    fn resolve_prepared_video_frame(&self, _session_epoch: u32, _frame_id: u32, _accepted: bool) -> Result<(), String> {
+        Err("prepared video admission is unavailable on this platform adapter".to_owned())
+    }
+
     fn poll_encoded_audio(&self) -> Result<Option<PlatformEncodedAudioPacket>, String> {
         Ok(None)
     }

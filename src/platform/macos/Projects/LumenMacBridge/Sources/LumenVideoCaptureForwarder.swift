@@ -84,6 +84,7 @@ private struct LumenVideoIngressState: Sendable {
     var lastFrame: LumenBridgeDrainedVideoFrame?
     var lastEvent: LumenBridgeDrainedVideoEvent?
     var producerActive = false
+    var preparedReceipt: LumenPreparedVideoReceipt?
 }
 
 enum LumenVideoForwardingAdmission: Equatable, Sendable {
@@ -91,6 +92,7 @@ enum LumenVideoForwardingAdmission: Equatable, Sendable {
     case recoveryKeyFrameRequired
     case waitingForRecoveryKeyFrame
     case recoveredAtKeyFrame
+    case preparedFrameRejected
 }
 
 /// Synchronous capture callbacks cannot hop to an actor without adding a frame of
@@ -107,6 +109,7 @@ final class LumenVideoCaptureForwarder: Sendable {
 
     func reset() {
         state.withLock { value in
+            value.preparedReceipt?.resolve(accepted: false)
             let frameCapacity = value.frames.capacity
             let eventCapacity = value.events.capacity
             value = LumenVideoIngressState()
@@ -121,6 +124,8 @@ final class LumenVideoCaptureForwarder: Sendable {
     /// the boundary are rejected until then.
     func resetForMediaEpoch() {
         state.withLock { value in
+            value.preparedReceipt?.resolve(accepted: false)
+            value.preparedReceipt = nil
             value.droppedFrameCount &+= UInt64(value.frames.count)
             value.droppedEventCount &+= UInt64(value.events.count)
             value.frames.removeAll()
@@ -144,7 +149,24 @@ final class LumenVideoCaptureForwarder: Sendable {
     }
 
     func setProducerActive(_ active: Bool) {
-        state.withLock { $0.producerActive = active }
+        state.withLock { value in
+            value.producerActive = active
+            if !active {
+                value.preparedReceipt?.resolve(accepted: false)
+                value.preparedReceipt = nil
+            }
+        }
+    }
+
+    func resolvePreparedFrame(sessionEpoch: UInt32, frameID: UInt32, accepted: Bool) -> Bool {
+        let receipt = state.withLock { value -> LumenPreparedVideoReceipt? in
+            guard let receipt = value.preparedReceipt,
+                  receipt.sessionEpoch == sessionEpoch, receipt.frameID == frameID else { return nil }
+            value.preparedReceipt = nil
+            return receipt
+        }
+        receipt?.resolve(accepted: accepted)
+        return receipt != nil
     }
 
     func snapshot() -> LumenBridgeVideoForwardingSnapshot {
@@ -179,7 +201,8 @@ final class LumenVideoCaptureForwarder: Sendable {
             isKeyFrame: frame.isKeyFrame,
             requiresBootstrapAcknowledgement: frame.requiresBootstrapAcknowledgement,
             isRepairKeyFrame: frame.isRepairKeyFrame,
-            isHDRSignaled: frame.isHDRSignaled
+            isHDRSignaled: frame.isHDRSignaled,
+            preparedReceipt: frame.preparedReceipt
         )
     }
 
@@ -194,7 +217,8 @@ final class LumenVideoCaptureForwarder: Sendable {
         requiresBootstrapAcknowledgement: Bool = false,
         isRepairKeyFrame: Bool = false,
         isHDRSignaled: Bool,
-        isReplay: Bool = false
+        isReplay: Bool = false,
+        preparedReceipt: LumenPreparedVideoReceipt? = nil
     ) -> LumenVideoForwardingAdmission {
         let frame = LumenBridgeDrainedVideoFrame(
             codec: codec,
@@ -210,6 +234,17 @@ final class LumenVideoCaptureForwarder: Sendable {
             sampleBuffer: sampleBuffer
         )
         return state.withLock { value in
+            if let preparedReceipt {
+                // One unresolved frame owns the encoder's symbol buffers.
+                // A rejected local admission must not evict an accepted chain.
+                guard value.preparedReceipt == nil, !value.frames.isFull,
+                      !value.awaitingRecoveryKeyFrame else {
+                    value.droppedFrameCount &+= 1
+                    preparedReceipt.resolve(accepted: false)
+                    return .preparedFrameRejected
+                }
+                value.preparedReceipt = preparedReceipt
+            }
             value.frameCount &+= 1
             value.lastFrame = frame
             if value.awaitingRecoveryKeyFrame {

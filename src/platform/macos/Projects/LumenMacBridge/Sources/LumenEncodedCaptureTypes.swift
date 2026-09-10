@@ -32,6 +32,7 @@ struct LumenEncodedFrame: Sendable {
     let isRepairKeyFrame: Bool
     let isHDRSignaled: Bool
     let hdrValidationReport: LumenHDRValidationReport
+    let preparedReceipt: LumenPreparedVideoReceipt?
 
     init(
         sampleBuffer: CMSampleBuffer,
@@ -43,7 +44,8 @@ struct LumenEncodedFrame: Sendable {
         requiresBootstrapAcknowledgement: Bool,
         isRepairKeyFrame: Bool,
         isHDRSignaled: Bool,
-        hdrValidationReport: LumenHDRValidationReport
+        hdrValidationReport: LumenHDRValidationReport,
+        preparedReceipt: LumenPreparedVideoReceipt? = nil
     ) {
         sampleBufferHandle = LumenSampleBufferHandle(retaining: sampleBuffer)
         self.codec = codec
@@ -55,6 +57,7 @@ struct LumenEncodedFrame: Sendable {
         self.isRepairKeyFrame = isRepairKeyFrame
         self.isHDRSignaled = isHDRSignaled
         self.hdrValidationReport = hdrValidationReport
+        self.preparedReceipt = preparedReceipt
     }
 
     var sampleBuffer: CMSampleBuffer {
