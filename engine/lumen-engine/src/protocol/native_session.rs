@@ -12,6 +12,7 @@ pub const NATIVE_MEDIA_CAPABILITY_CONTINUOUS_SCROLL: u64 = 1 << 2;
 pub const NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS: u64 = 1 << 3;
 pub const NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK: u64 = 1 << 4;
 pub const NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME: u64 = 1 << 5;
+pub const NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY: u64 = 1 << 6;
 pub const NATIVE_REQUIRED_MEDIA_CAPABILITIES: u64 =
     NATIVE_MEDIA_CAPABILITY_SAME_GENERATION_KEYFRAMES
         | NATIVE_MEDIA_CAPABILITY_FIXED_CADENCE_FEEDBACK
@@ -19,7 +20,8 @@ pub const NATIVE_REQUIRED_MEDIA_CAPABILITIES: u64 =
         | NATIVE_MEDIA_CAPABILITY_PAIRED_FEEDBACK_WINDOWS;
 pub const NATIVE_SUPPORTED_MEDIA_CAPABILITIES: u64 = NATIVE_REQUIRED_MEDIA_CAPABILITIES
     | NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK
-    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME;
+    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME
+    | NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
 const MINIMUM_DATAGRAM_PAYLOAD: u32 = NATIVE_FEC_BLOCK_HEADER_BYTES as u32 + 1;
 const INITIAL_POLICY_REVISION: u32 = 1;
 const OPUS_PACKET_DURATION_MICROSECONDS: u32 = 5_000;
@@ -570,6 +572,8 @@ pub struct VideoBootstrap {
     pub reason: i32,
     #[prost(bytes = "vec", tag = "8")]
     pub access_unit: Vec<u8>,
+    #[prost(uint32, tag = "9")]
+    pub codec_reference_frame_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -969,11 +973,20 @@ fn validate_video_bootstrap(bootstrap: &VideoBootstrap) -> Result<(), NativeCont
             .filter(|reason| *reason != NativeVideoBootstrapReason::Unspecified)
             .is_none()
         || bootstrap.access_unit.is_empty()
+        || !valid_bootstrap_codec_reference(bootstrap)
     {
         Err(NativeControlWireError::InvalidEnvelope)
     } else {
         Ok(())
     }
+}
+
+fn valid_bootstrap_codec_reference(bootstrap: &VideoBootstrap) -> bool {
+    if !bootstrap.access_unit.starts_with(b"SCV3") { return bootstrap.codec_reference_frame_id == 0; }
+    if bootstrap.access_unit.len() < 20 { return false; }
+    let reference = u32::from_le_bytes(bootstrap.access_unit[16..20].try_into().unwrap());
+    reference == bootstrap.codec_reference_frame_id
+        && (reference == 0 || bootstrap.reason == NativeVideoBootstrapReason::Repair as i32)
 }
 
 fn encode_control_message<M: Message>(
@@ -1190,6 +1203,10 @@ pub fn negotiate_native_session(
     {
         return Err(NativeSessionError::UnsupportedMediaCapabilities);
     }
+    if requested_exact_format.profile == NativeVideoProfile::ShadowVcLuma16
+        && client.media_capabilities & NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY == 0 {
+        return Err(NativeSessionError::UnsupportedMediaCapabilities);
+    }
     let minimum_encoder_bitrate_kbps = minimum_video_encoder_bitrate_kbps(
         client.width,
         client.height,
@@ -1266,7 +1283,8 @@ pub fn negotiate_native_session(
         media_capabilities: NATIVE_REQUIRED_MEDIA_CAPABILITIES
             | (client.media_capabilities
                 & (NATIVE_MEDIA_CAPABILITY_PACKET_ARRIVAL_FEEDBACK
-                    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME)),
+                    | NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME
+                    | NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY)),
     })
 }
 

@@ -26,6 +26,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
     private nonisolated let epoch = Atomic<UInt64>(1)
     private nonisolated let acknowledged = Atomic(false)
     private nonisolated let repair = Atomic(false)
+    private nonisolated let periodic = Atomic(false)
     private nonisolated let cadenceWakeEpoch = Atomic<UInt64>(0)
     private nonisolated let cadenceActive = Atomic(false)
 
@@ -33,20 +34,23 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         case spatial(ShadowVCEncoder)
         case regional(ShadowVC4Encoder)
         case luma16(ShadowVC3Encoder)
-        func encode(_ pixel: ShadowVCPixelBuffer, frameID: UInt32, forceKeyframe: Bool) async throws -> (bytes: Data, keyframe: Bool, prepared: Bool) {
+        func encode(_ pixel: ShadowVCPixelBuffer, frameID: UInt32, forceKeyframe: Bool, recoveringReference: Bool) async throws -> (bytes: Data, keyframe: Bool, prepared: Bool) {
             switch self {
             case .spatial(let encoder): return (try await encoder.encode(pixel, frameID: frameID), true, false)
             case .regional(let encoder):
                 let frame = try await encoder.encode(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
                 return (frame.serialized(), frame.isKeyframe, false)
             case .luma16(let encoder):
-                let packet = try await encoder.preparePacket(pixel, frameID: frameID, forceKeyframe: forceKeyframe)
-                if packet.isKeyframe {
+                let packet = try await encoder.preparePacket(pixel, frameID: frameID, forceKeyframe: forceKeyframe, recoveringReference: recoveringReference)
+                if packet.isKeyframe || recoveringReference {
                     // Reliable bootstraps already pause admission through ACK.
                     try await encoder.resolvePreparedPacket(frameID: frameID, accepted: true)
                 }
-                return (packet.data, packet.isKeyframe, !packet.isKeyframe)
+                return (packet.data, packet.isKeyframe || recoveringReference, !(packet.isKeyframe || recoveringReference))
             }
+        }
+        func retainAcknowledgedReference() async throws {
+            if case .luma16(let encoder) = self { try await encoder.retainAcknowledgedReference() }
         }
         func resolve(frameID: UInt32, accepted: Bool) async throws {
             guard case .luma16(let encoder) = self else { return }
@@ -64,6 +68,8 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         starting = true
         defer { starting = false }
         cadenceWakeEpoch.store(0, ordering: .releasing)
+        repair.store(false, ordering: .releasing)
+        periodic.store(false, ordering: .releasing)
         let configuration = context.configuration
         try configuration.validateExactVideoFormat()
         guard configuration.preprocessStrategy == .none,
@@ -122,6 +128,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
                 guard let self else { return false }
                 return self.acknowledged.load(ordering: .acquiring)
                     && !self.repair.load(ordering: .acquiring)
+                    && !self.periodic.load(ordering: .acquiring)
             },
             takeWakeRequest: { [weak self] generation in
                 self?.cadenceWakeEpoch.exchange(0, ordering: .acquiringAndReleasing) == generation
@@ -180,9 +187,13 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         cadenceWakeEpoch.store(epoch.load(ordering: .acquiring), ordering: .releasing)
         return true
     }
-    func requestPeriodicKeyFrame() async -> Bool { requestImmediateKeyFrame(); return true }
+    func requestPeriodicKeyFrame() async -> Bool { periodic.store(true, ordering: .releasing); return true }
     func resumeVideoEncodingAfterCodecAck() async -> Bool {
-        guard stream != nil else { return false }
+        guard stream != nil, let encoder else { return false }
+        let generation = epoch.load(ordering: .acquiring)
+        do { try await encoder.retainAcknowledgedReference() }
+        catch { return false }
+        guard stream != nil, generation == epoch.load(ordering: .acquiring) else { return false }
         acknowledged.store(true, ordering: .releasing); return true
     }
     private func consume(_ captured: LumenShadowVCCapturedFrame) async {
@@ -201,7 +212,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
         // Only unchanged content is throttled. A wake/damage callback restores
         // native cadence before admission; bootstrap and repair also bypass it.
         if target < context.configuration.targetFrameRate,
-           bootstrapEpoch == generation, !repair.load(ordering: .acquiring),
+           bootstrapEpoch == generation, !repair.load(ordering: .acquiring), !periodic.load(ordering: .acquiring),
            !contentPacer.admit(sourcePresentationTime: timestamp, forceKeyFrame: false).isAdmitted {
             statistics.intentionalFrameCadenceDropCount &+= 1
             return
@@ -230,7 +241,10 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
             statistics.submittedFrameCount &+= 1
             let bootstrap = bootstrapEpoch != generation
             let requestedRepair = repair.exchange(false, ordering: .acquiringAndReleasing)
-            let encoded = try await encoder.encode(.init(pixel), frameID: frameID, forceKeyframe: bootstrap || requestedRepair)
+            let requestedPeriodic = periodic.exchange(false, ordering: .acquiringAndReleasing)
+            let referenceRecovery = !bootstrap && !requestedPeriodic && requestedRepair && context.configuration.videoProfile == .shadowVCLuma16
+            let encoded = try await encoder.encode(.init(pixel), frameID: frameID,
+                forceKeyframe: bootstrap || requestedPeriodic || (requestedRepair && !referenceRecovery), recoveringReference: referenceRecovery)
             preparedFrameID = encoded.prepared ? frameID : nil
             guard generation == epoch.load(ordering: .acquiring), stream != nil else {
                 if encoded.prepared { try await encoder.resolve(frameID: frameID, accepted: false) }
@@ -245,7 +259,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime {
                 : predictive ? 0x53435632 : 0x53435631
             let sample = try Self.sample(bytes: bytes, width: CVPixelBufferGetWidth(pixel), height: CVPixelBufferGetHeight(pixel), timestamp: timestamp, subtype: subtype)
             let isRepair = requestedRepair && !bootstrap
-            let requiresAcknowledgement = bootstrap || (predictive && isRepair)
+            let requiresAcknowledgement = bootstrap || (predictive && (isRepair || requestedPeriodic))
             // Pause before publishing a predictive-profile repair. No later P
             // frame may evict the independent repair from a bounded host queue.
             if requiresAcknowledgement { acknowledged.store(false, ordering: .releasing) }

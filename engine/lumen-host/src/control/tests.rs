@@ -547,7 +547,7 @@ impl PlatformSessionControl for MediaParkFailurePlatform {
     }
 }
 
-fn configured_native_router(
+pub(crate) fn configured_native_router(
     platform: Arc<dyn PlatformSessionControl>,
 ) -> (
     tempfile::TempDir,

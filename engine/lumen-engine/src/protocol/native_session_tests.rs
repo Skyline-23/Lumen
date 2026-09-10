@@ -192,6 +192,7 @@ fn luma16_negotiates_sdr_and_hdr_without_relabeling_fc4() {
             dynamic_range: range as i32, color_range: NativeColorRange::Limited as i32,
         };
         let mut client = hello();
+        client.media_capabilities |= super::native_session::NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
         client.sink_transfer = if range == NativeDynamicRange::Hdr10 { NativeDisplayTransfer::Pq as i32 } else { NativeDisplayTransfer::Sdr as i32 };
         client.requested_video_format = Some(format.clone());
         client.video_capabilities = vec![capability_with_format(format.clone())];
@@ -199,6 +200,9 @@ fn luma16_negotiates_sdr_and_hdr_without_relabeling_fc4() {
         host.video_capabilities = client.video_capabilities.clone();
         let plan = negotiate_native_session(&client, &host, 9).unwrap();
         assert_eq!(plan.selected_video_capability.unwrap().format, Some(format));
+        client.media_capabilities &= !super::native_session::NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+        assert_eq!(negotiate_native_session(&client, &host, 9), Err(NativeSessionError::UnsupportedMediaCapabilities));
+        client.media_capabilities |= super::native_session::NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
         host.video_capabilities[0].format.as_mut().unwrap().profile = NativeVideoProfile::ShadowVcRegionalPredictor8 as i32;
         assert!(negotiate_native_session(&client, &host, 9).is_err());
     }

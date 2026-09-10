@@ -15,7 +15,7 @@ use lumen_engine::{
     NativeVideoBootstrapReason, NativeVideoBootstrapResultCode, NativeVideoCodec,
     NativeVideoKeyframeRequestReason, NativeVideoProfile, SessionStarted, SessionStopped,
     StartSessionAck, StopSession, VideoBootstrap, VideoBootstrapResult, VideoKeyframeRequest,
-    NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME, NATIVE_VIDEO_STREAM_ID,
+    NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY, NATIVE_MEDIA_CAPABILITY_MEDIA_PARK_RESUME, NATIVE_VIDEO_STREAM_ID,
 };
 use tokio::sync::Notify;
 
@@ -146,6 +146,7 @@ struct PendingNativeSession {
     retired_video_bootstrap_generation_watermark: u32,
     video_bootstrap_failure: Option<String>,
     last_video_bootstrap_acknowledgement: Option<VideoBootstrapResult>,
+    acknowledged_codec_reference: Option<(u32, u32)>,
     next_generation_id: u32,
     repair_keyframe: RepairKeyframeState,
     periodic_idr: PeriodicIdrGate,
@@ -1593,6 +1594,11 @@ impl ControlRouter {
         // may cite it before any DATAGRAM in this generation has been sent.
         pending.last_sent_video_frame_id = pending.last_sent_video_frame_id.max(result.frame_id);
         pending.last_video_bootstrap_acknowledgement = Some(result.clone());
+        pending.acknowledged_codec_reference = pending.video_bootstrap.as_ref().and_then(|bootstrap| {
+            let bytes = &bootstrap.access_unit;
+            (bytes.starts_with(b"SCV3") && bytes.len() >= 20).then(||
+                (bootstrap.configuration_id, u32::from_le_bytes(bytes[4..8].try_into().unwrap())))
+        });
         pending.video_bootstrap = None;
         pending.video_bootstrap_sent = false;
         pending.video_bootstrap_requires_encoder_resume = false;
@@ -2810,6 +2816,7 @@ impl ControlRouter {
             retired_video_bootstrap_generation_watermark: 0,
             video_bootstrap_failure: None,
             last_video_bootstrap_acknowledgement: None,
+            acknowledged_codec_reference: None,
             next_generation_id: 1,
             repair_keyframe: RepairKeyframeState::Idle,
             periodic_idr: PeriodicIdrGate::default(),
@@ -3048,6 +3055,16 @@ impl ControlRouter {
         {
             return None;
         }
+        let codec_reference_frame_id = if access_unit.starts_with(b"SCV3") && access_unit.len() >= 20 {
+            u32::from_le_bytes(access_unit[16..20].try_into().unwrap())
+        } else { 0 };
+        if codec_reference_frame_id != 0 &&
+            (reason != NativeVideoBootstrapReason::Repair
+                || pending.plan.selected_video_format().is_none_or(|format| format.profile != NativeVideoProfile::ShadowVcLuma16 as i32)
+                || pending.plan.media_capabilities & NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY == 0
+                || pending.acknowledged_codec_reference != Some((configuration_id, codec_reference_frame_id))) {
+            return None;
+        }
         if let Some(bootstrap) = pending.video_bootstrap.take() {
             pending.retire_video_bootstrap(bootstrap);
         }
@@ -3085,6 +3102,7 @@ impl ControlRouter {
             capture_timestamp_us,
             reason: reason as i32,
             access_unit,
+            codec_reference_frame_id,
         });
         if pending.media_park_state == NativeMediaParkState::Resuming {
             pending.resume_bootstrap_revision = Some(pending.media_park_revision);
@@ -3644,6 +3662,7 @@ fn reset_media_delivery(pending: &mut PendingNativeSession) -> Result<(), String
     pending.video_bootstrap_retry_attempt = 0;
     pending.acknowledged_generation_id = None;
     pending.last_video_bootstrap_acknowledgement = None;
+    pending.acknowledged_codec_reference = None;
     pending.video_bootstrap_failure = None;
     pending.resume_bootstrap_revision = None;
     pending.resume_bootstrap_generation = None;
@@ -3725,5 +3744,56 @@ mod periodic_idr_tests {
         assert!(!gate.mark_requested(due + Duration::from_millis(1)));
         gate.mark_generation(9, 17);
         assert!(gate.is_outstanding());
+    }
+}
+
+#[cfg(test)]
+mod fc3_reference_recovery_tests {
+    use super::*;
+    use crate::control::tests::{configured_native_router, RecordingPlatformSessionControl};
+
+    fn packet(id: u32, reference: u32) -> Vec<u8> {
+        let mut bytes = b"SCV3".to_vec();
+        for value in [id, 2816, 1836, reference] { bytes.extend_from_slice(&value.to_le_bytes()); }
+        bytes
+    }
+
+    #[test]
+    fn recovery_requires_decoded_source_identity_and_matching_configuration() {
+        let platform = Arc::new(RecordingPlatformSessionControl::default());
+        let (_root, mut router, context, plan) = configured_native_router(platform);
+        let pending = router.native.pending.as_mut().unwrap();
+        pending.plan.media_capabilities |= NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+        pending.plan.selected_video_capability.as_mut().unwrap().format.as_mut().unwrap().profile = NativeVideoProfile::ShadowVcLuma16 as i32;
+        assert!(router.publish_native_video_bootstrap(plan.video_configuration_id, 1, 10,
+            NativeVideoBootstrapReason::Repair, true, packet(42, 41)).is_none());
+        let generation = router.publish_native_video_bootstrap(plan.video_configuration_id, 1, 10,
+            NativeVideoBootstrapReason::Initial, true, packet(41, 0)).unwrap();
+        router.take_native_video_bootstrap(context.session_epoch).unwrap();
+        assert!(router.dispatch_native_control(ClientControlEnvelope { request_id: 8,
+            payload: Some(client_control_envelope::Payload::VideoBootstrapResult(VideoBootstrapResult {
+                session_epoch: context.session_epoch, stream_id: plan.video_stream_id,
+                configuration_id: plan.video_configuration_id, generation_id: generation, frame_id: 1,
+                result: NativeVideoBootstrapResultCode::Decoded as i32, message: String::new(),
+            })) }, &context).is_empty());
+        assert_eq!(router.native.pending.as_ref().unwrap().acknowledged_codec_reference, Some((plan.video_configuration_id, 41)));
+        assert!(router.publish_native_video_bootstrap(plan.video_configuration_id, 2, 20,
+            NativeVideoBootstrapReason::Repair, true, packet(44, 1)).is_none(), "transport ID is not the codec reference");
+        assert!(router.publish_native_video_bootstrap(plan.video_configuration_id+1, 2, 20,
+            NativeVideoBootstrapReason::Repair, true, packet(44, 41)).is_none());
+        assert!(router.publish_native_video_bootstrap(plan.video_configuration_id, 2, 20,
+            NativeVideoBootstrapReason::Periodic, true, packet(44, 41)).is_none());
+        router.native.pending.as_mut().unwrap().plan.media_capabilities &= !NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+        assert!(router.publish_native_video_bootstrap(plan.video_configuration_id, 2, 20,
+            NativeVideoBootstrapReason::Repair, true, packet(44, 41)).is_none());
+        router.native.pending.as_mut().unwrap().plan.media_capabilities |= NATIVE_MEDIA_CAPABILITY_FC3_REFERENCE_RECOVERY;
+        let repaired = router.publish_native_video_bootstrap(plan.video_configuration_id, 2, 20,
+            NativeVideoBootstrapReason::Repair, true, packet(44, 41)).unwrap();
+        assert!(repaired > generation);
+        let bootstrap = router.take_native_video_bootstrap(context.session_epoch).unwrap();
+        assert_eq!(bootstrap.codec_reference_frame_id, 41);
+        assert_eq!(bootstrap.frame_id, 2);
+        // Publication alone cannot acknowledge the new source state.
+        assert_eq!(router.native.pending.as_ref().unwrap().acknowledged_codec_reference, Some((plan.video_configuration_id, 41)));
     }
 }
