@@ -9,9 +9,10 @@ import XCTest
 final class LumenShadowVCContentCadenceTests: XCTestCase {
     func testMetadataOnlyIdleLowersTargetWithoutEvictingLastCompleteImage() async throws {
         let controller = try XCTUnwrap(LumenUnchangedContentCadenceController(requestedFrameRate: 120))
-        let (frames, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let output = LumenShadowVCStreamOutput(continuation: continuation, contentCadence: controller,
-            currentEpoch: { 7 }, pipelineStable: { true }, takeWakeRequest: { _ in false }, failed: { _ in })
+        let (frames, continuation) = AsyncThrowingStream<LumenShadowVCCapturedFrame, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let signals = CaptureSignalFixture(epoch: 7)
+        let output = LumenShadowVCStreamOutput(
+            continuation: continuation, contentCadence: controller, signals: signals)
         let complete = try sample(status: .complete, dirtyRects: [NSValue(rect: .init(x: 0, y: 0, width: 2, height: 2))])
         let idle = try sample(status: .idle)
         XCTAssertNil(idle.imageBuffer)
@@ -21,53 +22,52 @@ final class LumenShadowVCContentCadenceTests: XCTestCase {
         XCTAssertEqual(controller.targetFrameRate, 1)
         output.finish()
         var iterator = frames.makeAsyncIterator()
-        let first = await iterator.next()
+        let first = try await iterator.next()
         XCTAssertNotNil(first?.sample.value.imageBuffer)
         XCTAssertEqual(first?.epoch, 7)
-        let second = await iterator.next()
+        let second = try await iterator.next()
         XCTAssertNil(second)
         XCTAssertEqual(output.droppedFrames.load(ordering: .relaxed), 0)
     }
 
     func testInputWakeReopensCadenceBeforeTheNextUnchangedImage() async throws {
         let controller = try XCTUnwrap(LumenUnchangedContentCadenceController(requestedFrameRate: 120))
-        let wakeEpoch = Atomic<UInt64>(0)
-        let stable = Atomic(true)
-        let (frames, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let output = LumenShadowVCStreamOutput(continuation: continuation, contentCadence: controller,
-            currentEpoch: { 7 }, pipelineStable: { stable.load(ordering: .acquiring) },
-            takeWakeRequest: { wakeEpoch.exchange(0, ordering: .acquiringAndReleasing) == $0 }, failed: { _ in })
+        let signals = CaptureSignalFixture(epoch: 7)
+        let (frames, continuation) = AsyncThrowingStream<LumenShadowVCCapturedFrame, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let output = LumenShadowVCStreamOutput(
+            continuation: continuation, contentCadence: controller, signals: signals)
         let idle = try sample(status: .idle)
         let unchanged = try sample(status: .complete, dirtyRects: [])
         output.process(idle, monotonicTimeSeconds: 0)
         output.process(idle, monotonicTimeSeconds: 1)
         XCTAssertEqual(controller.targetFrameRate, 1)
-        wakeEpoch.store(6, ordering: .releasing)
+        signals.wakeEpoch.store(6, ordering: .releasing)
         output.process(idle, monotonicTimeSeconds: 1.01)
         XCTAssertEqual(controller.targetFrameRate, 1, "A retired media epoch cannot wake this capture")
-        wakeEpoch.store(7, ordering: .releasing)
+        signals.wakeEpoch.store(7, ordering: .releasing)
         output.process(unchanged, monotonicTimeSeconds: 1.02)
         XCTAssertEqual(controller.targetFrameRate, 120)
         output.process(idle, monotonicTimeSeconds: 2.01)
         XCTAssertEqual(controller.targetFrameRate, 120)
         output.process(idle, monotonicTimeSeconds: 2.02)
         XCTAssertEqual(controller.targetFrameRate, 1)
-        stable.store(false, ordering: .releasing)
+        signals.stable.store(false, ordering: .releasing)
         output.process(idle, monotonicTimeSeconds: 2.03)
         XCTAssertEqual(controller.targetFrameRate, 120, "Bootstrap/repair cannot inherit idle pacing")
         output.process(idle, monotonicTimeSeconds: 5)
         XCTAssertEqual(controller.targetFrameRate, 120)
         output.finish()
         var iterator = frames.makeAsyncIterator()
-        let frame = await iterator.next()
+        let frame = try await iterator.next()
         XCTAssertNotNil(frame?.sample.value.imageBuffer)
     }
 
     func testMovingContentAndUntrustedMetadataReopenWithoutInput() throws {
         let controller = try XCTUnwrap(LumenUnchangedContentCadenceController(requestedFrameRate: 120))
-        let (_, continuation) = AsyncStream<LumenShadowVCCapturedFrame>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let output = LumenShadowVCStreamOutput(continuation: continuation, contentCadence: controller,
-            currentEpoch: { 1 }, pipelineStable: { true }, takeWakeRequest: { _ in false }, failed: { _ in })
+        let (_, continuation) = AsyncThrowingStream<LumenShadowVCCapturedFrame, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let signals = CaptureSignalFixture(epoch: 1)
+        let output = LumenShadowVCStreamOutput(
+            continuation: continuation, contentCadence: controller, signals: signals)
         let idle = try sample(status: .idle)
         output.process(idle, monotonicTimeSeconds: 0)
         output.process(idle, monotonicTimeSeconds: 1)
@@ -125,5 +125,25 @@ final class LumenShadowVCContentCadenceTests: XCTestCase {
                 Unmanaged.passUnretained(dirtyRects as NSArray).toOpaque())
         }
         return result
+    }
+}
+
+private actor CaptureSignalFixture: LumenShadowVCCaptureSignals {
+    nonisolated let wakeEpoch = Atomic<UInt64>(0)
+    nonisolated let stable = Atomic(true)
+    private let epoch: UInt64
+
+    init(epoch: UInt64) {
+        self.epoch = epoch
+    }
+
+    nonisolated func currentCaptureEpoch() -> UInt64 { epoch }
+
+    nonisolated func capturePipelineIsStable() -> Bool {
+        stable.load(ordering: .acquiring)
+    }
+
+    nonisolated func takeCaptureWakeRequest(epoch: UInt64) -> Bool {
+        wakeEpoch.exchange(0, ordering: .acquiringAndReleasing) == epoch
     }
 }

@@ -2149,6 +2149,21 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
             max_width: 3840, max_height: 2160, max_refresh_millihz: 240_000,
             hardware_accelerated: Some(false),
         });
+        if shadow_vc_pixel10_is_provisioned() {
+            for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
+                capabilities.push(NativeVideoCapability {
+                    format: Some(NativeVideoFormat {
+                        codec: NativeVideoCodec::ShadowVc as i32,
+                        profile: NativeVideoProfile::ShadowVcPixel10 as i32,
+                        chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
+                        bit_depth: 10, dynamic_range: range as i32,
+                        color_range: NativeColorRange::Limited as i32,
+                    }),
+                    max_width: 2816, max_height: 1836, max_refresh_millihz: 240_000,
+                    hardware_accelerated: Some(true),
+                });
+            }
+        }
         if shadow_vc_luma16_is_provisioned() {
             for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
                 capabilities.push(NativeVideoCapability {
@@ -2165,6 +2180,15 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
         }
     }
     capabilities
+}
+
+#[cfg(target_os = "macos")]
+fn shadow_vc_pixel10_is_provisioned() -> bool {
+    std::env::current_exe().ok()
+        .and_then(|path| path.parent()?.parent().map(|contents| contents.join("Resources")))
+        .is_some_and(|resources| resources.join(
+            "ShadowVC_ShadowVC3Pixel.bundle/Contents/Resources/Models/2816x1836/manifest.json"
+        ).is_file())
 }
 
 #[cfg(target_os = "macos")]

@@ -92,7 +92,7 @@ let project = Project(
         developmentRegion: "en",
         disableSynthesizedResourceAccessors: true
     ),
-    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("1617adaf1c7efd9935210c9586cae6ce8d32e901"))],
+    packages: [swiftOpusPackage, .package(url: "https://github.com/Skyline-23/shadowvc.git", .revision("4b7110e9ab6ee57f24889e9943250c58accd377b"))],
     settings: .settings(base: baseSettings),
     targets: [
         .target(
@@ -143,6 +143,7 @@ let project = Project(
                 .package(product: "COpus"),
                 .package(product: "ShadowVCRuntime"),
                 .package(product: "ShadowVC3Encoder"),
+                .package(product: "ShadowVC3Pixel"),
                 .sdk(name: "AppKit", type: .framework),
                 .sdk(name: "AVFoundation", type: .framework),
                 .sdk(name: "CoreAudio", type: .framework),

@@ -14,6 +14,14 @@ fn dimensions(width: u64, height: u64) -> bool {
 }
 
 pub(super) fn validate(format: PlatformVideoFormat, bytes: &[u8]) -> Result<(), String> {
+    if format.profile == PlatformVideoProfile::ShadowVcPixel10 {
+        if format.codec != PlatformVideoCodec::ShadowVc || format.bit_depth != 10
+            || format.chroma_subsampling != PlatformChromaSubsampling::Yuv420
+            || format.color_range != PlatformColorRange::Limited {
+            return Err("unsupported pixel video format".into());
+        }
+        return super::pixel::validate_configuration(format, bytes);
+    }
     if bytes.len() > 1024 || format.codec != PlatformVideoCodec::ShadowVc
         || !matches!(format.profile, PlatformVideoProfile::ShadowVcSpatialBase16 | PlatformVideoProfile::ShadowVcRegionalPredictor8 | PlatformVideoProfile::ShadowVcLuma16)
         || format.chroma_subsampling != PlatformChromaSubsampling::Yuv420

@@ -8,6 +8,9 @@ mod h26x;
 mod hevc_sps;
 mod sps;
 mod shadow_vc;
+mod pixel;
+#[cfg(test)]
+mod pixel_tests;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 #[cfg(test)]
@@ -52,8 +55,12 @@ impl NativeVideoBitstreamNormalizer {
             PlatformVideoCodec::H264 => h26x::normalize_avc(&frame.payload, self.format)?,
             PlatformVideoCodec::Hevc => h26x::normalize_hevc(&frame.payload, self.format)?,
             PlatformVideoCodec::ShadowVc => {
-                let configuration = shadow_vc::configuration_from_frame(&frame.payload)?;
-                (frame.payload.clone(), Some(configuration))
+                if self.format.profile == crate::PlatformVideoProfile::ShadowVcPixel10 {
+                    pixel::normalize(self.format, &frame.payload, frame.key_frame, self.active_configuration.as_deref())?
+                } else {
+                    let configuration = shadow_vc::configuration_from_frame(&frame.payload)?;
+                    (frame.payload.clone(), Some(configuration))
+                }
             }
             PlatformVideoCodec::Av1 => {
                 validate_av1_obu_stream(&frame.payload)?;

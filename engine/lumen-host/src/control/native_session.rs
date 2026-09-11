@@ -1951,13 +1951,16 @@ impl ControlRouter {
         let Some(pending) = self.native.pending.as_ref() else {
             return Err("native session has not been negotiated".to_owned());
         };
-        // FC4's reversible integer reference has no accumulated reconstruction
-        // drift. Gaps/CRC failures already request acknowledged independent
+        // Integer-reference profiles have no accumulated reconstruction drift.
+        // Gaps/CRC failures already request acknowledged independent
         // repair. Periodic refresh would stall healthy capture for the large
         // reliable bootstrap and its acknowledgement without improving quality.
         if pending.plan.selected_video_capability.as_ref()
             .and_then(|capability| capability.format.as_ref())
-            .is_some_and(|format| format.profile == NativeVideoProfile::ShadowVcRegionalPredictor8 as i32)
+            .is_some_and(|format| matches!(
+                NativeVideoProfile::try_from(format.profile),
+                Ok(NativeVideoProfile::ShadowVcRegionalPredictor8 | NativeVideoProfile::ShadowVcPixel10)
+            ))
         {
             return Ok(false);
         }
@@ -3510,6 +3513,7 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoProfile::ShadowVcSpatialBase16 => PlatformVideoProfile::ShadowVcSpatialBase16,
             NativeVideoProfile::ShadowVcRegionalPredictor8 => PlatformVideoProfile::ShadowVcRegionalPredictor8,
             NativeVideoProfile::ShadowVcLuma16 => PlatformVideoProfile::ShadowVcLuma16,
+            NativeVideoProfile::ShadowVcPixel10 => PlatformVideoProfile::ShadowVcPixel10,
             NativeVideoProfile::Unspecified => return None,
         },
         chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)
@@ -3700,6 +3704,22 @@ fn native_negotiation_error(request_id: u64, error: NativeSessionError) -> HostC
 #[cfg(test)]
 mod periodic_idr_tests {
     use super::*;
+
+    #[test]
+    fn integer_reference_profiles_skip_periodic_refresh_but_allow_repair() {
+        use crate::control::tests::{configured_native_router, RecordingPlatformSessionControl};
+        for profile in [NativeVideoProfile::ShadowVcRegionalPredictor8, NativeVideoProfile::ShadowVcPixel10] {
+            let platform = Arc::new(RecordingPlatformSessionControl::default());
+            let (_root, mut router, context, _) = configured_native_router(platform);
+            let pending = router.native.pending.as_mut().unwrap();
+            pending.plan.selected_video_capability.as_mut().unwrap().format.as_mut().unwrap().profile = profile as i32;
+            pending.acknowledged_generation_id = Some(1);
+            pending.periodic_idr.schedule_after_generation_ack(Instant::now() - Duration::from_secs(5));
+            assert!(!router.maybe_request_native_video_periodic(context.session_epoch, false).unwrap());
+            assert!(!router.native.pending.as_ref().unwrap().periodic_idr.is_outstanding());
+            assert!(router.request_native_video_repair(context.session_epoch, NativeVideoRepairSource::IncompleteTransport).unwrap());
+        }
+    }
 
     #[test]
     fn periodic_deadline_has_exact_999ms_and_1000ms_boundary() {

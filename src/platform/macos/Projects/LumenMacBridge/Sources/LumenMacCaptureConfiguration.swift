@@ -121,7 +121,7 @@ extension LumenMacCaptureConfiguration {
 
     public var negotiatedDynamicRangeTransport: LumenMacDynamicRangeTransport {
         if codec == .shadowVC {
-            guard videoProfile == .shadowVCLuma16, dynamicRange == .hdr10 else {
+            guard [.shadowVCLuma16, .shadowVCPixel10].contains(videoProfile), dynamicRange == .hdr10 else {
                 return LumenMacDynamicRangeTransportSDR
             }
             return sinkRequest.dynamicRangeTransport == LumenMacDynamicRangeTransportFrameGatedHDR

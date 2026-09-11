@@ -1399,6 +1399,13 @@ struct PreparedVideoReceipt {
 impl PreparedVideoReceipt {
     fn for_frame(platform: &Arc<dyn PlatformSessionControl>, session_epoch: u32,
                  profile: crate::PlatformVideoProfile, frame: &crate::PlatformEncodedVideoFrame) -> Option<Arc<Self>> {
+        if profile == crate::PlatformVideoProfile::ShadowVcPixel10 && !frame.key_frame {
+            let metadata = fc3_pixel_entropy::frame::parse(&frame.payload)?;
+            return Some(Arc::new(Self {
+                platform: Arc::clone(platform), session_epoch,
+                source_frame_id: metadata.generation, resolved: AtomicBool::new(false),
+            }));
+        }
         if profile != crate::PlatformVideoProfile::ShadowVcLuma16 || frame.key_frame
             || !frame.payload.starts_with(b"SCV3") || frame.payload.len() < 20 {
             return None;
