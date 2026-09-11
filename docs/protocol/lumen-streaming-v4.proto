@@ -38,9 +38,14 @@ enum VideoProfile {
   // SCV3 q52 FC3 Luma16 frames with explicit temporal references and model identity.
   // P010 output; SDR BT.709 or negotiated HDR10 PQ/BT.2020.
   VIDEO_PROFILE_SHADOW_VC_LUMA16 = 11;
-  // FCP3 pixel changes, exact ten-bit references and negotiated local-attention models.
-  // Conditional Rice/rANS or exact palette; P010 SDR BT.709 or HDR10 PQ/BT.2020.
+  // Legacy FCP3 revision 0 with a signed 32-pixel motion bound.
+  // New endpoints advertise only PIXEL10_MOTION128 and do not fall back to this profile.
   VIDEO_PROFILE_SHADOW_VC_PIXEL10 = 12;
+  // FCP3 revision 1: header byte 17 is 1; signed motion components are in [-128, 128].
+  // The hashed configuration requires framing=fcp3-v2 and motion_limit=128.
+  // Exact ten-bit references and local-attention models; Rice/rANS or exact palette.
+  // P010 SDR BT.709 or HDR10 PQ/BT.2020. Revision 0 is not accepted by this profile.
+  VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128 = 13;
 }
 
 enum ChromaSubsampling {

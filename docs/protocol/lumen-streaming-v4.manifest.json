@@ -6,10 +6,10 @@
   "alpn": "lumen-stream/4",
   "schema": {
     "path": "docs/protocol/lumen-streaming-v4.proto",
-    "sha256": "d267b320c363ab45fc5f563fe8d617c63c8ff97f602b6881861125469a2c05b6"
+    "sha256": "236f751787a0df428a6be790f96afb6d7965845b1bbdaf03b9a80ef4920baab1"
   },
   "descriptor": {
     "path": "docs/protocol/lumen-streaming-v4.descriptor.pb",
-    "sha256": "448777354913155cc8474518d7fd60a16c72158b07c58e39442be74af77e660b"
+    "sha256": "c5653491f64f54f82953872ad29caa15c3b9acc7a1923a94a101a799ce45dd4b"
   }
 }
