@@ -36,8 +36,25 @@ for _ in {1..40}; do
   sleep 0.25
 done
 if [[ "$LUMEN_RUN_ACTIVE" == true ]]; then
-  echo "A previous Lumen process is still serving this build output" >&2
-  exit 1
+  # The worker can be parked in an unfinished codec ACK during shutdown.
+  # After its graceful deadline, retire only these owned build processes.
+  while read -r LUMEN_RUN_PID LUMEN_RUN_PATH; do
+    case "$LUMEN_RUN_PATH" in
+      "$APP_BINARY"|"$APP_BUNDLE/Contents/MacOS/LumenHostWorker"|"$APP_BUNDLE/Contents/MacOS/LumenRustHostWorker")
+        echo "Retiring unresponsive previous build process: $LUMEN_RUN_PID" >&2
+        kill -KILL "$LUMEN_RUN_PID" 2>/dev/null || true
+        ;;
+    esac
+  done < <(ps -axo pid=,comm=)
+  sleep 0.25
+  while read -r LUMEN_RUN_PID LUMEN_RUN_PATH; do
+    case "$LUMEN_RUN_PATH" in
+      "$APP_BINARY"|"$APP_BUNDLE/Contents/MacOS/LumenHostWorker"|"$APP_BUNDLE/Contents/MacOS/LumenRustHostWorker")
+        echo "A previous Lumen process is still serving this build output" >&2
+        exit 1
+        ;;
+    esac
+  done < <(ps -axo pid=,comm=)
 fi
 
 (
