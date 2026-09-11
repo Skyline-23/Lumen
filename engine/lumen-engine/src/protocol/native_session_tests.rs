@@ -209,11 +209,11 @@ fn luma16_negotiates_sdr_and_hdr_without_relabeling_fc4() {
 }
 
 #[test]
-fn pixel_motion128_negotiates_both_ranges_and_rejects_legacy_pixel_frames() {
+fn pixel_dc_negotiates_both_ranges_and_rejects_legacy_pixel_frames() {
     for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
         let format = NativeVideoFormat {
             codec: NativeVideoCodec::ShadowVc as i32,
-            profile: NativeVideoProfile::ShadowVcPixel10Motion128 as i32,
+            profile: NativeVideoProfile::ShadowVcPixel10Dc as i32,
             chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
             bit_depth: 10,
             dynamic_range: range as i32,
@@ -232,13 +232,15 @@ fn pixel_motion128_negotiates_both_ranges_and_rejects_legacy_pixel_frames() {
         let plan = negotiate_native_session(&client, &host, 9).unwrap();
         assert_eq!(plan.selected_video_capability.unwrap().format, Some(format.clone()));
 
-        let mut legacy = format;
-        legacy.profile = NativeVideoProfile::ShadowVcPixel10 as i32;
-        host.video_capabilities = vec![capability_with_format(legacy.clone())];
-        assert!(negotiate_native_session(&client, &host, 9).is_err());
-        client.requested_video_format = Some(legacy.clone());
-        client.video_capabilities = vec![capability_with_format(legacy)];
-        assert!(negotiate_native_session(&client, &host, 9).is_err());
+        for profile in [NativeVideoProfile::ShadowVcPixel10, NativeVideoProfile::ShadowVcPixel10Motion128] {
+            let mut legacy = format.clone();
+            legacy.profile = profile as i32;
+            host.video_capabilities = vec![capability_with_format(legacy.clone())];
+            assert!(negotiate_native_session(&client, &host, 9).is_err());
+            client.requested_video_format = Some(legacy.clone());
+            client.video_capabilities = vec![capability_with_format(legacy)];
+            assert!(negotiate_native_session(&client, &host, 9).is_err());
+        }
     }
 }
 

@@ -1959,7 +1959,7 @@ impl ControlRouter {
             .and_then(|capability| capability.format.as_ref())
             .is_some_and(|format| matches!(
                 NativeVideoProfile::try_from(format.profile),
-                Ok(NativeVideoProfile::ShadowVcRegionalPredictor8 | NativeVideoProfile::ShadowVcPixel10Motion128)
+                Ok(NativeVideoProfile::ShadowVcRegionalPredictor8 | NativeVideoProfile::ShadowVcPixel10Dc)
             ))
         {
             return Ok(false);
@@ -3513,8 +3513,8 @@ fn platform_video_format(plan: &HostSessionPlan) -> Option<PlatformVideoFormat> 
             NativeVideoProfile::ShadowVcSpatialBase16 => PlatformVideoProfile::ShadowVcSpatialBase16,
             NativeVideoProfile::ShadowVcRegionalPredictor8 => PlatformVideoProfile::ShadowVcRegionalPredictor8,
             NativeVideoProfile::ShadowVcLuma16 => PlatformVideoProfile::ShadowVcLuma16,
-            NativeVideoProfile::ShadowVcPixel10Motion128 => PlatformVideoProfile::ShadowVcPixel10,
-            NativeVideoProfile::Unspecified | NativeVideoProfile::ShadowVcPixel10 => return None,
+            NativeVideoProfile::ShadowVcPixel10Dc => PlatformVideoProfile::ShadowVcPixel10,
+            NativeVideoProfile::Unspecified | NativeVideoProfile::ShadowVcPixel10 | NativeVideoProfile::ShadowVcPixel10Motion128 => return None,
         },
         chroma_subsampling: match NativeChromaSubsampling::try_from(selected.chroma_subsampling)
             .ok()?
@@ -3708,7 +3708,7 @@ mod periodic_idr_tests {
     #[test]
     fn integer_reference_profiles_skip_periodic_refresh_but_allow_repair() {
         use crate::control::tests::{configured_native_router, RecordingPlatformSessionControl};
-        for profile in [NativeVideoProfile::ShadowVcRegionalPredictor8, NativeVideoProfile::ShadowVcPixel10Motion128] {
+        for profile in [NativeVideoProfile::ShadowVcRegionalPredictor8, NativeVideoProfile::ShadowVcPixel10Dc] {
             let platform = Arc::new(RecordingPlatformSessionControl::default());
             let (_root, mut router, context, _) = configured_native_router(platform);
             let pending = router.native.pending.as_mut().unwrap();

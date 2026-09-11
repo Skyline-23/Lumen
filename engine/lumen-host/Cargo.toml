@@ -34,7 +34,7 @@ shlex = "1.3"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 crc32c = "0.6.8"
 sha2 = "0.10"
-fc3-pixel-entropy = { git = "https://github.com/Skyline-23/shadowvc.git", rev = "cb6a35e1ae67bf556e7ec49f145c629a826ab268" }
+fc3-pixel-entropy = { git = "https://github.com/Skyline-23/shadowvc.git", rev = "9709d365aaa49dc1ffc54e301ed60609831af2bc" }
 
 [target.'cfg(windows)'.dependencies]
 windows-api = { package = "windows", version = "=0.61.3", features = [

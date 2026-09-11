@@ -2154,7 +2154,7 @@ fn default_video_capabilities() -> Vec<lumen_engine::NativeVideoCapability> {
                 capabilities.push(NativeVideoCapability {
                     format: Some(NativeVideoFormat {
                         codec: NativeVideoCodec::ShadowVc as i32,
-                        profile: NativeVideoProfile::ShadowVcPixel10Motion128 as i32,
+                        profile: NativeVideoProfile::ShadowVcPixel10Dc as i32,
                         chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
                         bit_depth: 10, dynamic_range: range as i32,
                         color_range: NativeColorRange::Limited as i32,
