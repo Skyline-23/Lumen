@@ -130,6 +130,10 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
   /// SCV3 q52 FC3 Luma16 frames with explicit temporal references and model identity.
   /// P010 output; SDR BT.709 or negotiated HDR10 PQ/BT.2020.
   case shadowVcLuma16 // = 11
+
+  /// FCP3 pixel changes, exact ten-bit references and negotiated local-attention models.
+  /// Conditional Rice/rANS or exact palette; P010 SDR BT.709 or HDR10 PQ/BT.2020.
+  case shadowVcPixel10 // = 12
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -150,6 +154,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case 9: self = .shadowVcSpatialBase16
     case 10: self = .shadowVcRegionalPredictor8
     case 11: self = .shadowVcLuma16
+    case 12: self = .shadowVcPixel10
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -168,6 +173,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case .shadowVcSpatialBase16: return 9
     case .shadowVcRegionalPredictor8: return 10
     case .shadowVcLuma16: return 11
+    case .shadowVcPixel10: return 12
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -186,6 +192,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     .shadowVcSpatialBase16,
     .shadowVcRegionalPredictor8,
     .shadowVcLuma16,
+    .shadowVcPixel10,
   ]
 
 }
@@ -1321,6 +1328,9 @@ public nonisolated struct Lumen_Streaming_V4_ClientSessionHello: @unchecked Send
   /// Clears the value of `requestedVideoFormat`. Subsequent reads from it will return its default value.
   public mutating func clearRequestedVideoFormat() {_uniqueStorage()._requestedVideoFormat = nil}
 
+  /// Bit 6: FC3 long-term reference recovery. Required for profile LUMA16.
+  /// Retain at most the two most recent decoded reliable bootstrap source
+  /// states per configuration; ordinary deltas still require their latest parent.
   public var mediaCapabilities: UInt64 {
     get {_storage._mediaCapabilities}
     set {_uniqueStorage()._mediaCapabilities = newValue}
@@ -1642,6 +1652,13 @@ public nonisolated struct Lumen_Streaming_V4_VideoBootstrap: Sendable {
   public var reason: Lumen_Streaming_V4_VideoBootstrapReason = .unspecified
 
   public var accessUnit: Data = Data()
+
+  /// Zero for an independent bootstrap. Nonzero only for a negotiated FC3
+  /// REPAIR, matching SCV3.referenceID and a previously DECODED bootstrap's
+  /// codec source frame ID in this configuration (not the transport frame_id).
+  /// The new generation bypasses missing datagram objects only after successful
+  /// reference decode. DECODED acknowledges retention of the new source state.
+  public var codecReferenceFrameID: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2702,7 +2719,7 @@ nonisolated extension Lumen_Streaming_V4_DynamicRange: SwiftProtobuf._ProtoNameP
 }
 
 nonisolated extension Lumen_Streaming_V4_VideoProfile: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_ChromaSubsampling: SwiftProtobuf._ProtoNameProviding {
@@ -3690,7 +3707,7 @@ nonisolated extension Lumen_Streaming_V4_VideoKeyframeRequest: SwiftProtobuf.Mes
 
 nonisolated extension Lumen_Streaming_V4_VideoBootstrap: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".VideoBootstrap"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_epoch\0\u{3}stream_id\0\u{3}configuration_id\0\u{3}generation_id\0\u{3}frame_id\0\u{3}capture_timestamp_us\0\u{1}reason\0\u{3}access_unit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_epoch\0\u{3}stream_id\0\u{3}configuration_id\0\u{3}generation_id\0\u{3}frame_id\0\u{3}capture_timestamp_us\0\u{1}reason\0\u{3}access_unit\0\u{3}codec_reference_frame_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3706,6 +3723,7 @@ nonisolated extension Lumen_Streaming_V4_VideoBootstrap: SwiftProtobuf.Message, 
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.captureTimestampUs) }()
       case 7: try { try decoder.decodeSingularEnumField(value: &self.reason) }()
       case 8: try { try decoder.decodeSingularBytesField(value: &self.accessUnit) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.codecReferenceFrameID) }()
       default: break
       }
     }
@@ -3736,6 +3754,9 @@ nonisolated extension Lumen_Streaming_V4_VideoBootstrap: SwiftProtobuf.Message, 
     if !self.accessUnit.isEmpty {
       try visitor.visitSingularBytesField(value: self.accessUnit, fieldNumber: 8)
     }
+    if self.codecReferenceFrameID != 0 {
+      try visitor.visitSingularUInt32Field(value: self.codecReferenceFrameID, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3748,6 +3769,7 @@ nonisolated extension Lumen_Streaming_V4_VideoBootstrap: SwiftProtobuf.Message, 
     if lhs.captureTimestampUs != rhs.captureTimestampUs {return false}
     if lhs.reason != rhs.reason {return false}
     if lhs.accessUnit != rhs.accessUnit {return false}
+    if lhs.codecReferenceFrameID != rhs.codecReferenceFrameID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

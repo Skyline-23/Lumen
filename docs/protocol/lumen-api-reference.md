@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `8bda00d4e04acf4a57b180e9505c793da841b752e90af95fd20b9d5c21ad66e5`
+- Contract SHA-256: `ee0afd9d104e30410e8f60e0d2b073ec76e8f929b7753eaffd69a31c0bb13fa1`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
@@ -34,10 +34,10 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | Declaration kind | Count |
 | --- | ---: |
 | Enums | 22 |
-| Enum values | 119 |
+| Enum values | 120 |
 | Messages | 42 |
 | Services | 0 |
-| Message fields | 286 |
+| Message fields | 287 |
 | Explicit oneofs | 6 |
 | Synthetic optional oneofs | 3 |
 
@@ -75,6 +75,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16</code> | 9 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8</code> | 10 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_LUMA16</code> | 11 |
+| <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_PIXEL10</code> | 12 |
 
 ### enum `lumen.streaming.v4.ChromaSubsampling`
 
@@ -431,6 +432,7 @@ Reserved tags: <code>3..&lt;4</code>, <code>7..&lt;8</code>, <code>8..&lt;9</cod
 | 6 | <code>lumen.streaming.v4.VideoBootstrap.capture_timestamp_us</code> | <code>captureTimestampUs</code> | singular | <code>uint32</code> | — | — | no |
 | 7 | <code>lumen.streaming.v4.VideoBootstrap.reason</code> | <code>reason</code> | singular | <code>enum</code> | <code>lumen.streaming.v4.VideoBootstrapReason</code> | — | no |
 | 8 | <code>lumen.streaming.v4.VideoBootstrap.access_unit</code> | <code>accessUnit</code> | singular | <code>bytes</code> | — | — | no |
+| 9 | <code>lumen.streaming.v4.VideoBootstrap.codec_reference_frame_id</code> | <code>codecReferenceFrameId</code> | singular | <code>uint32</code> | — | — | no |
 
 ### message `lumen.streaming.v4.VideoBootstrapResult`
 

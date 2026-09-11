@@ -38,6 +38,9 @@ enum VideoProfile {
   // SCV3 q52 FC3 Luma16 frames with explicit temporal references and model identity.
   // P010 output; SDR BT.709 or negotiated HDR10 PQ/BT.2020.
   VIDEO_PROFILE_SHADOW_VC_LUMA16 = 11;
+  // FCP3 pixel changes, exact ten-bit references and negotiated local-attention models.
+  // Conditional Rice/rANS or exact palette; P010 SDR BT.709 or HDR10 PQ/BT.2020.
+  VIDEO_PROFILE_SHADOW_VC_PIXEL10 = 12;
 }
 
 enum ChromaSubsampling {
