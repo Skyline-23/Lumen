@@ -27,6 +27,8 @@ fn configuration() -> Vec<u8> {
         "chroma": "420",
         "color": "bt2020-pq-limited",
         "reference": "pixel-spectrum-fixed-integer-v3",
+        "framing": "fcp3-v2",
+        "motion_limit": 128,
         "presentation": "exact-palette-or-signal-bounded-neural-v2",
         "pixel_mask": "plane-bounds-deflate-v1",
         "entropy": {
@@ -152,6 +154,9 @@ fn pixel_rejects_color_model_geometry_and_frame_identity_mismatches() {
         ("model_sha256", json!("unknown")),
         ("width", json!(1920)),
         ("bit_depth", json!(8)),
+        ("framing", json!("fcp3-v1")),
+        ("motion_limit", json!(32)),
+        ("motion_limit", json!(null)),
     ] {
         let mut value: serde_json::Value = serde_json::from_slice(&record).unwrap();
         value[field] = replacement;

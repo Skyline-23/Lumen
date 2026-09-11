@@ -28,6 +28,8 @@ pub(super) fn validate_configuration(
         || value["chroma"] != "420"
         || value["color"] != color
         || value["reference"] != "pixel-spectrum-fixed-integer-v3"
+        || value["framing"] != "fcp3-v2"
+        || value["motion_limit"] != 128
         || value["presentation"] != "exact-palette-or-signal-bounded-neural-v2"
         || value["pixel_mask"] != "plane-bounds-deflate-v1"
         || value["entropy"]["format"] != "conditional-pixel-rans4-v1"

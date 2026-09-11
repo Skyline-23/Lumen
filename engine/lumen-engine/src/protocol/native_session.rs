@@ -203,6 +203,7 @@ pub enum NativeVideoProfile {
     ShadowVcRegionalPredictor8 = 10,
     ShadowVcLuma16 = 11,
     ShadowVcPixel10 = 12,
+    ShadowVcPixel10Motion128 = 13,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Enumeration)]
@@ -1362,14 +1363,14 @@ fn exact_video_format(format: &NativeVideoFormat) -> Option<ExactVideoFormat> {
                 && exact.dynamic_range == NativeDynamicRange::Sdr
                 && exact.color_range == NativeColorRange::Limited
         }
-        NativeVideoProfile::ShadowVcLuma16 | NativeVideoProfile::ShadowVcPixel10 => {
+        NativeVideoProfile::ShadowVcLuma16 | NativeVideoProfile::ShadowVcPixel10Motion128 => {
             exact.codec == NativeVideoCodec::ShadowVc
                 && exact.chroma_subsampling == NativeChromaSubsampling::Yuv420
                 && exact.bit_depth == 10
                 && matches!(exact.dynamic_range, NativeDynamicRange::Sdr | NativeDynamicRange::Hdr10)
                 && exact.color_range == NativeColorRange::Limited
         }
-        NativeVideoProfile::Unspecified => false,
+        NativeVideoProfile::Unspecified | NativeVideoProfile::ShadowVcPixel10 => false,
     };
     let range_matches = match exact.dynamic_range {
         NativeDynamicRange::Sdr => true,
