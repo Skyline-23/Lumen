@@ -140,6 +140,15 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
   /// Exact ten-bit references and local-attention models; Rice/rANS or exact palette.
   /// P010 SDR BT.709 or HDR10 PQ/BT.2020. Revision 0 is not accepted by this profile.
   case shadowVcPixel10Motion128 // = 13
+
+  /// FCP3 revision 2: header byte 17 is 2; signed motion remains in [-128, 128].
+  /// The hashed configuration requires framing=fcp3-v3 and dc_prediction=left-wrap32767-v1.
+  /// Dense spectral coding 5 predicts DC channels 0, 64 and 80 from their left neighbor,
+  /// with modular reconstruction in [-16383, 16383]. The first column is unchanged.
+  /// The coding byte carries the selection; no per-frame predictor side stream is sent.
+  /// Ordinary spectral coding 4 and exact palette coding 2 retain their semantics.
+  /// Exact palette admission is preserved. P010 SDR BT.709 or HDR10 PQ/BT.2020.
+  case shadowVcPixel10Dc // = 14
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -162,6 +171,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case 11: self = .shadowVcLuma16
     case 12: self = .shadowVcPixel10
     case 13: self = .shadowVcPixel10Motion128
+    case 14: self = .shadowVcPixel10Dc
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -182,6 +192,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case .shadowVcLuma16: return 11
     case .shadowVcPixel10: return 12
     case .shadowVcPixel10Motion128: return 13
+    case .shadowVcPixel10Dc: return 14
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -202,6 +213,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     .shadowVcLuma16,
     .shadowVcPixel10,
     .shadowVcPixel10Motion128,
+    .shadowVcPixel10Dc,
   ]
 
 }
@@ -2728,7 +2740,7 @@ nonisolated extension Lumen_Streaming_V4_DynamicRange: SwiftProtobuf._ProtoNameP
 }
 
 nonisolated extension Lumen_Streaming_V4_VideoProfile: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_DC\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_ChromaSubsampling: SwiftProtobuf._ProtoNameProviding {

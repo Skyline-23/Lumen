@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `19a11750175f7a24c54caea1fb12f05004b888127086b20939f9120e87282954`
+- Contract SHA-256: `2017be2b28b9b35b4b4287e5073dbfdcf80c68f1658a4288429669bfec1ee3f0`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
@@ -34,7 +34,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | Declaration kind | Count |
 | --- | ---: |
 | Enums | 22 |
-| Enum values | 121 |
+| Enum values | 122 |
 | Messages | 42 |
 | Services | 0 |
 | Message fields | 287 |
@@ -77,6 +77,7 @@ The following declarations are read from the compiled descriptor, not parsed fro
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_LUMA16</code> | 11 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_PIXEL10</code> | 12 |
 | <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128</code> | 13 |
+| <code>lumen.streaming.v4.VideoProfile.VIDEO_PROFILE_SHADOW_VC_PIXEL10_DC</code> | 14 |
 
 ### enum `lumen.streaming.v4.ChromaSubsampling`
 

@@ -6,7 +6,7 @@ public enum LumenContract {
     public static let protocolName = "lumen-stream"
     public static let protobufPackage = "lumen.streaming.v4"
     public static let alpn = "lumen-stream/4"
-    public static let contractSHA256 = "19a11750175f7a24c54caea1fb12f05004b888127086b20939f9120e87282954"
+    public static let contractSHA256 = "2017be2b28b9b35b4b4287e5073dbfdcf80c68f1658a4288429669bfec1ee3f0"
 
     public static func contractData() throws -> Data {
         guard let url = Bundle.module.url(forResource: "lumen-contract-v4", withExtension: "json") else {
