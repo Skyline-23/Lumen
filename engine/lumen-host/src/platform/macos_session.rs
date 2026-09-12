@@ -807,7 +807,7 @@ impl PlatformSessionControl for MacPlatformSessionControl {
                     .then_some(())
                     .ok_or_else(|| {
                         format!(
-                            "macOS VideoToolbox rejected adaptive delivery bitrate={bitrate_kbps} kbps admission-divisor={admission_divisor}"
+                            "macOS capture runtime rejected adaptive delivery bitrate={bitrate_kbps} kbps admission-divisor={admission_divisor}"
                         )
                     })
             }

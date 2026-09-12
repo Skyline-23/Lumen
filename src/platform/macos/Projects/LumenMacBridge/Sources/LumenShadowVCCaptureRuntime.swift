@@ -10,7 +10,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime, LumenShadowVCCapt
     private let context: LumenEncodedCaptureRuntimeContext
     private let modelDirectory: URL?
     private let contentCadence: LumenUnchangedContentCadenceController
-    private var contentPacer: LumenAdaptiveVideoFramePacer
+    private var admissionPolicy: LumenShadowVCAdmissionPolicy
     private var stream: SCStream?
     private var output: LumenShadowVCStreamOutput?
     private var consumer: Task<Void, Never>?
@@ -83,7 +83,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime, LumenShadowVCCapt
         self.context = context
         self.modelDirectory = modelDirectory
         self.contentCadence = contentCadence
-        contentPacer = LumenAdaptiveVideoFramePacer(frameRateCeiling: context.configuration.targetFrameRate)
+        admissionPolicy = LumenShadowVCAdmissionPolicy(frameRateCeiling: context.configuration.targetFrameRate)
     }
     func start() async throws {
         guard stream == nil, !starting, !stopping else {
@@ -91,6 +91,7 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime, LumenShadowVCCapt
         }
         starting = true
         defer { starting = false }
+        admissionPolicy = LumenShadowVCAdmissionPolicy(frameRateCeiling: context.configuration.targetFrameRate)
         cadenceWakeEpoch.store(0, ordering: .releasing)
         pixelCadence = LumenPixelFrameCadence()
         acceptedPixelWake = pixelWakeRequest.load(ordering: .acquiring)
@@ -289,6 +290,14 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime, LumenShadowVCCapt
         acknowledged.store(true, ordering: .releasing)
         return true
     }
+    func setVideoDeliveryPolicy(bitrateKbps: Int, admissionDivisor: Int) -> Bool {
+        guard stream != nil, !stopping, cadenceActive.load(ordering: .acquiring),
+              bitrateKbps > 0 else { return false }
+        // FC3 keeps its negotiated quantizer. After this acknowledgement, the
+        // Rust transaction commits wire pacing and FEC together. Rejecting a
+        // nonexistent VT bitrate operation used to roll back that transaction.
+        return admissionPolicy.apply(admissionDivisor: admissionDivisor)
+    }
     private func consume(_ captured: LumenShadowVCCapturedFrame) async {
         let handle = captured.sample
         guard stream != nil, let encoder, let pixel = handle.value.imageBuffer else { return }
@@ -297,18 +306,12 @@ actor LumenShadowVCCaptureRuntime: LumenEncodedCaptureRuntime, LumenShadowVCCapt
         if bootstrapEpoch == generation && !acknowledged.load(ordering: .acquiring) { return }
         let timestamp = CMSampleBufferGetPresentationTimeStamp(handle.value)
         guard timestamp.isValid, timestamp.isNumeric else { return }
-        let target = contentCadence.targetFrameRate ?? context.configuration.targetFrameRate
-        if contentPacer.targetFrameRate != target {
-            _ = contentPacer.configure(targetFrameRate: target)
-        }
-        statistics.adaptiveTargetFrameRate = target
-        // Only unchanged content is throttled. A wake/damage callback restores
-        // native cadence before admission; bootstrap and repair also bypass it.
-        if target < context.configuration.targetFrameRate,
-            bootstrapEpoch == generation, !repair.load(ordering: .acquiring),
-            !periodic.load(ordering: .acquiring),
-            !contentPacer.admit(sourcePresentationTime: timestamp, forceKeyFrame: false).isAdmitted
-        {
+        admissionPolicy.setContentFrameRate(
+            contentCadence.targetFrameRate ?? context.configuration.targetFrameRate)
+        statistics.adaptiveTargetFrameRate = admissionPolicy.targetFrameRate
+        let requiresRefresh = bootstrapEpoch != generation
+            || repair.load(ordering: .acquiring) || periodic.load(ordering: .acquiring)
+        if !admissionPolicy.admit(sourcePresentationTime: timestamp, forceKeyFrame: requiresRefresh) {
             statistics.intentionalFrameCadenceDropCount &+= 1
             return
         }
