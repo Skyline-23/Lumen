@@ -57,6 +57,22 @@ enum VideoProfile {
   // Ordinary spectral coding 4 and exact palette coding 2 retain their semantics.
   // Exact palette admission is preserved. P010 SDR BT.709 or HDR10 PQ/BT.2020.
   VIDEO_PROFILE_SHADOW_VC_PIXEL10_DC = 14;
+  // FCP3 revision 4: header byte 17 is 4, framing=fcp3-v5, with the revision-3
+  // packet-chain CRC, DC prediction, motion and exact ten-bit color contracts.
+  // The hashed configuration requires compression_history=previous-body-deflate32k-v1.
+  // Mask and exact-palette bodies retain their existing uncompressed layouts.
+  // Each has an independent zlib preset dictionary: the last 32768 bytes of its
+  // latest transmitted uncompressed body in the accepted parent reference chain.
+  // When that history exists, FDICT is required and DICTID must match its Adler32.
+  // Otherwise FDICT is forbidden. No dictionary bytes are sent separately.
+  // An absent body preserves its dictionary. A speculative, rejected or invalid
+  // frame cannot advance either dictionary. Commit history only with its pixel
+  // reference after successful reconstruction/admission. ACK snapshots retain it.
+  // Parent=0 resets both histories before decoding and remains independently
+  // decodable; repair from a retained reference requires that exact history.
+  // Spectral bodies are unchanged. Endpoints advertise only this new profile;
+  // previous pixel profiles must not be silently decoded as this revision.
+  VIDEO_PROFILE_SHADOW_VC_PIXEL10_HISTORY = 15;
 }
 
 enum ChromaSubsampling {
