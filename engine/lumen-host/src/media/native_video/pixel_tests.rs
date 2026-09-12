@@ -17,32 +17,38 @@ const FORMAT: PlatformVideoFormat = PlatformVideoFormat {
 };
 
 fn configuration() -> Vec<u8> {
-    serde_json::to_vec(&json!({
-        "schema": "FC3NativePixelContextTransformerV1",
-        "width": 2420,
-        "height": 1668,
-        "model_sha256": "4ef72951e726f179c0b67f74c42f138b1c12ded49be5a0c92dcd9b58b9b865c1",
-        "quantizer": "learned-band-integer-table-v1",
-        "bit_depth": 10,
-        "chroma": "420",
-        "color": "bt2020-pq-limited",
-        "reference": "pixel-spectrum-fixed-integer-v3",
-        "framing": "fcp3-v5",
-        "compression_history": "previous-body-deflate32k-v1",
-        "reference_integrity": "packet-chain-crc32-v1",
-        "dc_prediction": "left-wrap32767-v1",
-        "motion_limit": 128,
-        "presentation": "exact-palette-or-signal-bounded-neural-v2",
-        "pixel_mask": "plane-bounds-deflate-v1",
-        "entropy": {
-            "format": "conditional-pixel-rans4-v1",
-            "escape": "scale-rice-v1",
-            "frequency_sha256": "08b9f5faf0ed3e50866bae69fa8790bb7773001a8ad9df5171fa673b5dfbcf2f",
-            "nonzero": true,
-            "group": 16
+    fc3_pixel_entropy::product::session_configuration(2420, 1668, true)
+        .unwrap()
+        .as_bytes()
+        .to_vec()
+}
+
+#[test]
+fn pixel_accepts_every_bundled_product_configuration() {
+    for (width, height) in [(2420, 1668), (2816, 1836)] {
+        for hdr in [false, true] {
+            let record = fc3_pixel_entropy::product::session_configuration(width, height, hdr)
+                .unwrap()
+                .as_bytes();
+            let format = PlatformVideoFormat {
+                dynamic_range: if hdr {
+                    PlatformDynamicRange::Hdr10
+                } else {
+                    PlatformDynamicRange::Sdr
+                },
+                color_range: if hdr {
+                    PlatformColorRange::Limited
+                } else {
+                    PlatformColorRange::Full
+                },
+                ..FORMAT
+            };
+            let bootstrap = packet(record, 1, 0);
+            let normalized =
+                pixel::normalize(format, &bridge(record, &bootstrap), true, None).unwrap();
+            assert_eq!(normalized, (bootstrap, Some(record.to_vec())));
         }
-    }))
-    .unwrap()
+    }
 }
 
 fn packet(record: &[u8], generation: u32, parent: u32) -> Vec<u8> {
@@ -155,6 +161,10 @@ fn pixel_rejects_color_model_geometry_and_frame_identity_mismatches() {
     for (field, replacement) in [
         ("color", json!("bt709-srgb-full")),
         ("model_sha256", json!("unknown")),
+        (
+            "model_sha256",
+            json!("4ef72951e726f179c0b67f74c42f138b1c12ded49be5a0c92dcd9b58b9b865c1"),
+        ),
         ("width", json!(1920)),
         ("bit_depth", json!(8)),
         ("framing", json!("fcp3-v1")),
@@ -169,6 +179,16 @@ fn pixel_rejects_color_model_geometry_and_frame_identity_mismatches() {
     ] {
         let mut value: serde_json::Value = serde_json::from_slice(&record).unwrap();
         value[field] = replacement;
+        let unsupported = serde_json::to_vec(&value).unwrap();
+        assert!(pixel::validate_configuration(FORMAT, &unsupported).is_err());
+    }
+
+    for (section, field, replacement) in [
+        ("config", "channels", json!(96)),
+        ("entropy", "frequency_sha256", json!("unknown")),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_slice(&record).unwrap();
+        value[section][field] = replacement;
         let unsupported = serde_json::to_vec(&value).unwrap();
         assert!(pixel::validate_configuration(FORMAT, &unsupported).is_err());
     }
