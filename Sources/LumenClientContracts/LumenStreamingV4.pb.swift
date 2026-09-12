@@ -152,6 +152,23 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
   /// Ordinary spectral coding 4 and exact palette coding 2 retain their semantics.
   /// Exact palette admission is preserved. P010 SDR BT.709 or HDR10 PQ/BT.2020.
   case shadowVcPixel10Dc // = 14
+
+  /// FCP3 revision 4: header byte 17 is 4, framing=fcp3-v5, with the revision-3
+  /// packet-chain CRC, DC prediction, motion and exact ten-bit color contracts.
+  /// The hashed configuration requires compression_history=previous-body-deflate32k-v1.
+  /// Mask and exact-palette bodies retain their existing uncompressed layouts.
+  /// Each has an independent zlib preset dictionary: the last 32768 bytes of its
+  /// latest transmitted uncompressed body in the accepted parent reference chain.
+  /// When that history exists, FDICT is required and DICTID must match its Adler32.
+  /// Otherwise FDICT is forbidden. No dictionary bytes are sent separately.
+  /// An absent body preserves its dictionary. A speculative, rejected or invalid
+  /// frame cannot advance either dictionary. Commit history only with its pixel
+  /// reference after successful reconstruction/admission. ACK snapshots retain it.
+  /// Parent=0 resets both histories before decoding and remains independently
+  /// decodable; repair from a retained reference requires that exact history.
+  /// Spectral bodies are unchanged. Endpoints advertise only this new profile;
+  /// previous pixel profiles must not be silently decoded as this revision.
+  case shadowVcPixel10History // = 15
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -175,6 +192,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case 12: self = .shadowVcPixel10
     case 13: self = .shadowVcPixel10Motion128
     case 14: self = .shadowVcPixel10Dc
+    case 15: self = .shadowVcPixel10History
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -196,6 +214,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     case .shadowVcPixel10: return 12
     case .shadowVcPixel10Motion128: return 13
     case .shadowVcPixel10Dc: return 14
+    case .shadowVcPixel10History: return 15
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -217,6 +236,7 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
     .shadowVcPixel10,
     .shadowVcPixel10Motion128,
     .shadowVcPixel10Dc,
+    .shadowVcPixel10History,
   ]
 
 }
@@ -2743,7 +2763,7 @@ nonisolated extension Lumen_Streaming_V4_DynamicRange: SwiftProtobuf._ProtoNameP
 }
 
 nonisolated extension Lumen_Streaming_V4_VideoProfile: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_DC\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VIDEO_PROFILE_UNSPECIFIED\0\u{1}VIDEO_PROFILE_H264_MAIN\0\u{1}VIDEO_PROFILE_H264_HIGH\0\u{1}VIDEO_PROFILE_H264_HIGH_444_PREDICTIVE\0\u{1}VIDEO_PROFILE_HEVC_MAIN\0\u{1}VIDEO_PROFILE_HEVC_MAIN10\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444\0\u{1}VIDEO_PROFILE_HEVC_MAIN_444_10\0\u{1}VIDEO_PROFILE_AV1_MAIN\0\u{1}VIDEO_PROFILE_SHADOW_VC_SPATIAL_BASE16\0\u{1}VIDEO_PROFILE_SHADOW_VC_REGIONAL_PREDICTOR8\0\u{1}VIDEO_PROFILE_SHADOW_VC_LUMA16\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_MOTION128\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_DC\0\u{1}VIDEO_PROFILE_SHADOW_VC_PIXEL10_HISTORY\0")
 }
 
 nonisolated extension Lumen_Streaming_V4_ChromaSubsampling: SwiftProtobuf._ProtoNameProviding {
