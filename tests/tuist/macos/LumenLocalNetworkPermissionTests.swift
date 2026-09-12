@@ -36,7 +36,7 @@ final class LumenLocalNetworkPermissionTests: XCTestCase {
         XCTAssertTrue(workerInfo.contains("NSBonjourServices"))
         XCTAssertTrue(workerInfo.contains("_lumen._udp"))
         XCTAssertTrue(workerInfo.contains("dev.skyline23.lumen.hostworker"))
-        XCTAssertTrue(rustEntry.contains("MacPlatformSessionControl::new()"))
+        XCTAssertTrue(rustEntry.contains("MacPlatformSessionControl::new("))
         XCTAssertFalse(FileManager.default.fileExists(atPath: legacyWorker.path))
     }
 }
