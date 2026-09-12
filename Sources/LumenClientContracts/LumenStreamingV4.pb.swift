@@ -141,8 +141,11 @@ public nonisolated enum Lumen_Streaming_V4_VideoProfile: SwiftProtobuf.Enum, Swi
   /// P010 SDR BT.709 or HDR10 PQ/BT.2020. Revision 0 is not accepted by this profile.
   case shadowVcPixel10Motion128 // = 13
 
-  /// FCP3 revision 2: header byte 17 is 2; signed motion remains in [-128, 128].
-  /// The hashed configuration requires framing=fcp3-v3 and dc_prediction=left-wrap32767-v1.
+  /// FCP3 revision 3: header byte 17 is 3; signed motion remains in [-128, 128].
+  /// The hashed configuration requires framing=fcp3-v4, dc_prediction=left-wrap32767-v1,
+  /// and reference_integrity=packet-chain-crc32-v1. Header offset 32 carries the
+  /// previous accepted packet CRC; offset 36 is zero. Offset 40 retains the
+  /// current packet CRC. Reconstructed-image validation is an offline test only.
   /// Dense spectral coding 5 predicts DC channels 0, 64 and 80 from their left neighbor,
   /// with modular reconstruction in [-16383, 16383]. The first column is unchanged.
   /// The coding byte carries the selection; no per-frame predictor side stream is sent.

@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit it directly. Change `docs/protocol/lumen-contract-v4.json` and run `lumen-contract-tool generate`.
 
-- Contract SHA-256: `2017be2b28b9b35b4b4287e5073dbfdcf80c68f1658a4288429669bfec1ee3f0`
+- Contract SHA-256: `8de8abae359ec27b4a0accbf851acd4d805c6b3b2160c9ae625e1f4720a71559`
 - Contract schema version: `1`
 - Protobuf source: `docs/protocol/lumen-streaming-v4.proto`
 - Descriptor source name: `lumen-streaming-v4.proto`
