@@ -28,7 +28,8 @@ pub(super) fn validate_configuration(
         || value["chroma"] != "420"
         || value["color"] != color
         || value["reference"] != "pixel-spectrum-fixed-integer-v3"
-        || value["framing"] != "fcp3-v4"
+        || value["framing"] != "fcp3-v5"
+        || value["compression_history"] != "previous-body-deflate32k-v1"
         || value["reference_integrity"] != "packet-chain-crc32-v1"
         || value["dc_prediction"] != "left-wrap32767-v1"
         || value["motion_limit"] != 128

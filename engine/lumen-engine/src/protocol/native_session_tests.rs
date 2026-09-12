@@ -213,7 +213,7 @@ fn pixel_dc_negotiates_both_ranges_and_rejects_legacy_pixel_frames() {
     for range in [NativeDynamicRange::Sdr, NativeDynamicRange::Hdr10] {
         let format = NativeVideoFormat {
             codec: NativeVideoCodec::ShadowVc as i32,
-            profile: NativeVideoProfile::ShadowVcPixel10Dc as i32,
+            profile: NativeVideoProfile::ShadowVcPixel10History as i32,
             chroma_subsampling: NativeChromaSubsampling::Yuv420 as i32,
             bit_depth: 10,
             dynamic_range: range as i32,
@@ -232,7 +232,8 @@ fn pixel_dc_negotiates_both_ranges_and_rejects_legacy_pixel_frames() {
         let plan = negotiate_native_session(&client, &host, 9).unwrap();
         assert_eq!(plan.selected_video_capability.unwrap().format, Some(format.clone()));
 
-        for profile in [NativeVideoProfile::ShadowVcPixel10, NativeVideoProfile::ShadowVcPixel10Motion128] {
+        for profile in [NativeVideoProfile::ShadowVcPixel10, NativeVideoProfile::ShadowVcPixel10Motion128,
+                        NativeVideoProfile::ShadowVcPixel10Dc] {
             let mut legacy = format.clone();
             legacy.profile = profile as i32;
             host.video_capabilities = vec![capability_with_format(legacy.clone())];

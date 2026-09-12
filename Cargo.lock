@@ -476,7 +476,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 [[package]]
 name = "fc3-pixel-entropy"
 version = "0.1.0"
-source = "git+https://github.com/Skyline-23/shadowvc.git?rev=69140231bf0905dd694b7b7c7657bfa44641262a#69140231bf0905dd694b7b7c7657bfa44641262a"
+source = "git+https://github.com/Skyline-23/shadowvc.git?rev=6e7eeedc89a17ee2f27aba12784460167a542cbc#6e7eeedc89a17ee2f27aba12784460167a542cbc"
 dependencies = [
  "crc32fast",
  "flate2",
