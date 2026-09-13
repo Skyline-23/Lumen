@@ -229,6 +229,9 @@ message ClientSessionHello {
   uint64 streaming_profile_revision = 36;
   VideoFormat requested_video_format = 37;
   // Bit 6: FC3 long-term reference recovery. Required for profile LUMA16.
+  // Bit 7: FCP3 Pixel10 acknowledged-reference repair. Bit 6 does not imply
+  // this support. The Pixel10 codec configuration must also declare its
+  // acknowledged-bootstrap-v1 reference contract before a parent jump is used.
   // Retain at most the two most recent decoded reliable bootstrap source
   // states per configuration; ordinary deltas still require their latest parent.
   uint64 media_capabilities = 38;
@@ -339,10 +342,16 @@ message VideoBootstrap {
   VideoBootstrapReason reason = 7;
   bytes access_unit = 8;
   // Zero for an independent bootstrap. Nonzero only for a negotiated FC3
-  // REPAIR, matching SCV3.referenceID and a previously DECODED bootstrap's
+  // REPAIR, matching SCV3.referenceID (capability bit 6) or FCP3.parent
+  // (capability bit 7) and a previously DECODED bootstrap's
   // codec source frame ID in this configuration (not the transport frame_id).
   // The new generation bypasses missing datagram objects only after successful
   // reference decode. DECODED acknowledges retention of the new source state.
+  // FCP3 recovery also verifies the retained parent's previous-packet CRC and
+  // retains its canonical pixels, display pixels and compression dictionaries.
+  // A recovery generation must advance the latest accepted generation. A normal
+  // datagram must still follow its immediate parent. Failed recovery never
+  // replaces accepted or retained bootstrap state, including output-pool retry.
   uint32 codec_reference_frame_id = 9;
 }
 
